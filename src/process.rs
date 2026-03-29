@@ -63,6 +63,7 @@ struct GuestConfig {
     accel: Accelerator,
     machine: Machine,
     payload: Option<QemuPayload>,
+    smp: Option<u8>,
 }
 
 impl From<&GuestConfig> for Vec<String> {
@@ -105,10 +106,22 @@ impl From<&GuestConfig> for Vec<String> {
                     args.push("-drive".into());
                     args.push(format!("format=raw,file={},if=floppy", path.display()));
                 }
+                QemuPayload::Kernel(path) => {
+                    args.extend([
+                        "-kernel".into(),
+                        format!("{}", path.display()),
+                        "-append".into(),
+                        "console=ttyS0 earlyprintk=serial panic=-1".into(),
+                    ]);
+                }
             }
         }
 
         args.extend(["-m".into(), format!("{}m", cfg.ram_mb)]);
+
+        if let Some(smp) = cfg.smp {
+            args.extend(["-smp".into(), smp.to_string()]);
+        }
 
         args
     }
@@ -117,6 +130,7 @@ impl From<&GuestConfig> for Vec<String> {
 #[derive(Clone)]
 pub(crate) enum QemuPayload {
     GuestBin(PathBuf),
+    Kernel(PathBuf),
 }
 
 pub(crate) struct QemuProcess {
@@ -130,13 +144,19 @@ impl QemuProcess {
         let qmp_sock_path = tmp_dir.path().join("qmp.sock");
         let serial_sock_path = tmp_dir.path().join("serial.sock");
 
+        let (ram_mb, smp) = match payload {
+            QemuPayload::GuestBin(_) => (32, None),
+            QemuPayload::Kernel(_) => (256, Some(2)),
+        };
+
         let cfg = GuestConfig {
-            ram_mb: 32,
+            ram_mb,
             serial_sock_path: serial_sock_path.clone(),
             qmp_sock_path: qmp_sock_path.clone(),
             payload: Some(payload.clone()),
             accel: Accelerator::Kvm,
             machine: Machine::Pc,
+            smp,
         };
 
         let args: Vec<String> = (&cfg).into();
@@ -190,9 +210,9 @@ impl QemuProcess {
             match self.serial_reader.read_line(&mut line) {
                 Ok(0) => bail!("connection closed while waiting for {expected}"),
                 Ok(_) => {
-                    print!("[serial] {line}");
                     output.push_str(&line);
                     if output.contains(expected) {
+                        print!("[serial] {line}");
                         return Ok(());
                     }
                 }

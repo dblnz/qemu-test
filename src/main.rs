@@ -5,6 +5,7 @@ use qapi::qmp;
 mod process;
 
 const GUEST_BIN: &[u8] = include_bytes!("../payload/guest.bin");
+const KERNEL: &str = "payload/vmlinuz-virt";
 const EXPECTED_OUTPUT: &str = "HELLO FROM GUEST";
 
 macro_rules! function_name {
@@ -42,8 +43,34 @@ fn test_simple_guest_bin() -> Result<()> {
     Ok(())
 }
 
+fn test_kernel_boot() -> Result<()> {
+    println!("--- {} ---", function_name!());
+    let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
+    let payload = QemuPayload::Kernel(KERNEL.into());
+    let mut process =
+        QemuProcess::spawn(&tmp_dir, &payload).context("failed to spawn QEMU process")?;
+
+    let status = process
+        .qmp()
+        .execute(&qmp::query_status {})
+        .context("query_status failed")?;
+    println!("VM status: {:?}", status.status);
+
+    process
+        .wait_for_line("Hypervisor detected")
+        .context("kernel boot output not found")?;
+    println!("✓ kernel boot verified!");
+
+    let _ = process.qmp().execute(&qmp::quit {});
+    let exit = process.wait().context("failed to wait for QEMU")?;
+    println!("QEMU exited: {exit}");
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     test_simple_guest_bin()?;
+    test_kernel_boot()?;
 
     Ok(())
 }

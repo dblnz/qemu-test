@@ -170,6 +170,7 @@ dependencies = [
 [[package]]
 name = "qapi"
 version = "0.15.0"
+source = "git+https://github.com/mkulke/qapi-rs.git#8b349d6193cde27137084ff3ac166fb8a3645ac7"
 dependencies = [
  "log",
  "qapi-qmp",
@@ -181,6 +182,7 @@ dependencies = [
 [[package]]
 name = "qapi-codegen"
 version = "0.11.3"
+source = "git+https://github.com/mkulke/qapi-rs.git#8b349d6193cde27137084ff3ac166fb8a3645ac7"
 dependencies = [
  "qapi-parser",
 ]
@@ -188,6 +190,7 @@ dependencies = [
 [[package]]
 name = "qapi-parser"
 version = "0.11.0"
+source = "git+https://github.com/mkulke/qapi-rs.git#8b349d6193cde27137084ff3ac166fb8a3645ac7"
 dependencies = [
  "serde",
  "serde_json",
@@ -196,6 +199,7 @@ dependencies = [
 [[package]]
 name = "qapi-qmp"
 version = "0.15.0"
+source = "git+https://github.com/mkulke/qapi-rs.git#8b349d6193cde27137084ff3ac166fb8a3645ac7"
 dependencies = [
  "qapi-codegen",
  "qapi-spec",
@@ -205,6 +209,7 @@ dependencies = [
 [[package]]
 name = "qapi-spec"
 version = "0.3.2"
+source = "git+https://github.com/mkulke/qapi-rs.git#8b349d6193cde27137084ff3ac166fb8a3645ac7"
 dependencies = [
  "base64",
  "serde",
