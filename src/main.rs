@@ -7,7 +7,16 @@ mod process;
 const GUEST_BIN: &[u8] = include_bytes!("../payload/guest.bin");
 const EXPECTED_OUTPUT: &str = "HELLO FROM GUEST";
 
-fn main() -> Result<()> {
+macro_rules! function_name {
+    () => {{
+        fn f() {}
+        let name = std::any::type_name_of_val(&f);
+        name.rsplit("::").nth(1).unwrap()
+    }};
+}
+
+fn test_simple_guest_bin() -> Result<()> {
+    println!("--- {} ---", function_name!());
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let guest_bin_path = tmp_dir.path().join("guest.bin");
     std::fs::write(&guest_bin_path, GUEST_BIN).context("failed to write guest binary")?;
@@ -29,6 +38,12 @@ fn main() -> Result<()> {
     let _ = process.qmp().execute(&qmp::quit {});
     let exit = process.wait().context("failed to wait for QEMU")?;
     println!("QEMU exited: {exit}");
+
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    test_simple_guest_bin()?;
 
     Ok(())
 }
