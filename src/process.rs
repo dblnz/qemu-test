@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use qapi::qmp::{self, RunState};
 use qapi::{Qmp, Stream};
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
@@ -64,6 +65,7 @@ struct GuestConfig {
     machine: Machine,
     payload: Option<QemuPayload>,
     smp: Option<u8>,
+    incoming: bool,
 }
 
 impl From<&GuestConfig> for Vec<String> {
@@ -123,6 +125,10 @@ impl From<&GuestConfig> for Vec<String> {
             args.extend(["-smp".into(), smp.to_string()]);
         }
 
+        if cfg.incoming {
+            args.extend(["-incoming".into(), "defer".into()]);
+        }
+
         args
     }
 }
@@ -139,10 +145,39 @@ pub(crate) struct QemuProcess {
     serial_reader: BufReader<UnixStream>,
 }
 
+pub(crate) struct QemuConfig<'a> {
+    temp_dir: &'a TempDir,
+    payload: &'a QemuPayload,
+    incoming: bool,
+}
+
+impl<'a> QemuConfig<'a> {
+    pub fn new(temp_dir: &'a TempDir, payload: &'a QemuPayload) -> Self {
+        Self {
+            temp_dir,
+            payload,
+            incoming: false,
+        }
+    }
+
+    pub fn new_incoming(temp_dir: &'a TempDir, payload: &'a QemuPayload) -> Self {
+        Self {
+            temp_dir,
+            payload,
+            incoming: true,
+        }
+    }
+}
+
 impl QemuProcess {
-    pub fn spawn(tmp_dir: &TempDir, payload: &QemuPayload) -> Result<Self> {
-        let qmp_sock_path = tmp_dir.path().join("qmp.sock");
-        let serial_sock_path = tmp_dir.path().join("serial.sock");
+    pub fn spawn(cfg: QemuConfig) -> Result<Self> {
+        let QemuConfig {
+            temp_dir,
+            payload,
+            incoming,
+        } = cfg;
+        let qmp_sock_path = temp_dir.path().join("qmp.sock");
+        let serial_sock_path = temp_dir.path().join("serial.sock");
 
         let (ram_mb, smp) = match payload {
             QemuPayload::GuestBin(_) => (32, None),
@@ -157,6 +192,7 @@ impl QemuProcess {
             accel: Accelerator::Kvm,
             machine: Machine::Pc,
             smp,
+            incoming,
         };
 
         let args: Vec<String> = (&cfg).into();
@@ -164,7 +200,6 @@ impl QemuProcess {
             .args(args)
             .spawn()
             .context("failed to start qemu-system-x86_64")?;
-        println!("QEMU started (pid {})", child.id());
 
         let qmp_sock = Socket::new(qmp_sock_path);
         let stream = qmp_sock.connect(TIMEOUT)?.state.stream;
@@ -189,15 +224,11 @@ impl QemuProcess {
         Ok(process)
     }
 
-    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        self.child.wait()
-    }
-
     pub fn qmp(&mut self) -> &mut Qmp<Stream<BufReader<UnixStream>, UnixStream>> {
         &mut self.qmp
     }
 
-    pub fn wait_for_line(&mut self, expected: &str) -> Result<()> {
+    pub fn poll_line(&mut self, expected: &str) -> Result<()> {
         let mut output = String::new();
         let start = Instant::now();
 
@@ -225,5 +256,46 @@ impl QemuProcess {
                 Err(e) => bail!("serial read error: {e}"),
             }
         }
+    }
+
+    pub fn poll_status(&mut self, expected_state: RunState) -> Result<()> {
+        let start = std::time::Instant::now();
+        loop {
+            if start.elapsed() > TIMEOUT {
+                bail!("migration timed out");
+            }
+            let status = self
+                .qmp()
+                .execute(&qmp::query_status {})
+                .context("dest: query_status failed")?;
+            if status.status == expected_state {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for QemuProcess {
+    fn drop(&mut self) {
+        if let Err(e) = self.qmp().execute(&qmp::quit {}) {
+            eprintln!("failed to quit VM: {e}");
+        };
+
+        match self.child.wait() {
+            Err(e) => eprintln!("failed to wait for QEMU process: {e}"),
+            Ok(exit) => {
+                if !exit.success() {
+                    eprintln!("QEMU process exited with error: {exit}");
+                }
+                return;
+            }
+        }
+
+        if let Err(e) = self.child.kill() {
+            eprintln!("failed to kill QEMU process: {e}");
+            return;
+        };
     }
 }

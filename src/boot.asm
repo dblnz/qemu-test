@@ -1,12 +1,10 @@
-; Minimal x86 boot sector that writes a message to COM1 (serial port) and halts.
+; Minimal x86 boot sector that periodically writes a message to COM1 (serial port).
 ; Assemble with: nasm -f bin -o guest.bin boot.asm
 
 [bits 16]
 [org 0x7c00]
 
 start:
-    cli
-
     ; Initialize COM1 (0x3f8)
     mov dx, 0x3f9           ; Interrupt Enable Register
     xor al, al
@@ -36,28 +34,53 @@ start:
     mov al, 0x03            ; RTS/DSR set
     out dx, al
 
-    ; Send message character by character
+    ; Install a minimal IRQ0 (timer) handler
+    cli
+    xor ax, ax
+    mov es, ax
+    mov word [es:0x20], timer_isr  ; int 0x08 vector (IRQ0)
+    mov word [es:0x22], cs
+
+    ; Unmask IRQ0 in the PIC
+    in al, 0x21
+    and al, 0xFE
+    out 0x21, al
+    sti
+
+.main_loop:
     mov si, message
 .print_loop:
-    lodsb                   ; Load byte from [si] into al, increment si
+    lodsb
     test al, al
-    jz .done
-    mov bl, al              ; Save character in bl
+    jz .delay
+    mov bl, al
 
 .wait_tx:
-    mov dx, 0x3fd           ; Line Status Register
+    mov dx, 0x3fd
     in al, dx
-    test al, 0x20           ; Transmit buffer empty?
+    test al, 0x20
     jz .wait_tx
 
-    mov al, bl              ; Restore character
-    mov dx, 0x3f8           ; Data register
+    mov al, bl
+    mov dx, 0x3f8
     out dx, al
     jmp .print_loop
 
-.done:
+.delay:
+    ; Sleep ~1s using hlt. PIT fires at ~18.2 Hz, so 18 ticks ≈ 1s.
+    mov cx, 18
+.sleep_loop:
     hlt
-    jmp .done
+    dec cx
+    jnz .sleep_loop
+    jmp .main_loop
+
+timer_isr:
+    push ax
+    mov al, 0x20
+    out 0x20, al
+    pop ax
+    iret
 
 message: db "HELLO FROM GUEST", 13, 10, 0
 
