@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use process::{QemuConfig, QemuPayload, QemuProcess};
 use qapi::qmp::{self, RunState};
+use test_macro::test_fn;
 
 mod process;
 
@@ -8,16 +9,8 @@ const GUEST_BIN: &[u8] = include_bytes!("../payload/guest.bin");
 const KERNEL: &str = "payload/vmlinuz-virt";
 const EXPECTED_OUTPUT: &str = "HELLO FROM GUEST";
 
-macro_rules! function_name {
-    () => {{
-        fn f() {}
-        let name = std::any::type_name_of_val(&f);
-        name.rsplit("::").nth(1).unwrap()
-    }};
-}
-
+#[test_fn]
 fn test_simple_guest_bin() -> Result<()> {
-    println!("--- {} ---", function_name!());
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let guest_bin_path = tmp_dir.path().join("guest.bin");
     std::fs::write(&guest_bin_path, GUEST_BIN).context("failed to write guest binary")?;
@@ -34,13 +27,12 @@ fn test_simple_guest_bin() -> Result<()> {
     process
         .poll_line(EXPECTED_OUTPUT)
         .context("expected output not found")?;
-    println!("✓ guest serial output verified!");
 
     Ok(())
 }
 
+#[test_fn]
 fn test_kernel_boot() -> Result<()> {
-    println!("--- {} ---", function_name!());
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let payload = QemuPayload::Kernel(KERNEL.into());
     let cfg = QemuConfig::new(&tmp_dir, &payload);
@@ -55,14 +47,12 @@ fn test_kernel_boot() -> Result<()> {
     process
         .poll_line("Hypervisor detected")
         .context("kernel boot output not found")?;
-    println!("✓ kernel boot verified!");
 
     Ok(())
 }
 
+#[test_fn]
 fn test_live_migration() -> Result<()> {
-    println!("--- {} ---", function_name!());
-
     let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
     let dst_dir = tempfile::tempdir().context("failed to create dst temp dir")?;
     let mig_dir = tempfile::tempdir().context("failed to create migration temp dir")?;
@@ -119,7 +109,6 @@ fn test_live_migration() -> Result<()> {
     // Verify destination is healthy by reading serial output
     dst.poll_line(EXPECTED_OUTPUT)
         .context("destination: guest not producing serial output after migration")?;
-    println!("✓ migration verified, destination guest is alive");
 
     Ok(())
 }
