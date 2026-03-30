@@ -1,4 +1,5 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
+use log::{debug, error};
 use qapi::qmp::{self, RunState};
 use qapi::{Qmp, Stream};
 use std::io::{BufRead, BufReader};
@@ -243,7 +244,7 @@ impl QemuProcess {
                 Ok(_) => {
                     output.push_str(&line);
                     if output.contains(expected) {
-                        print!("[serial] {line}");
+                        debug!("[serial] {line}");
                         return Ok(());
                     }
                 }
@@ -280,21 +281,21 @@ impl QemuProcess {
 impl Drop for QemuProcess {
     fn drop(&mut self) {
         if let Err(e) = self.qmp().execute(&qmp::quit {}) {
-            eprintln!("failed to quit VM: {e}");
+            error!("failed to quit VM: {e}");
         };
 
         match self.child.wait() {
-            Err(e) => eprintln!("failed to wait for QEMU process: {e}"),
+            Err(e) => error!("failed to wait for QEMU process: {e}"),
             Ok(exit) => {
                 if !exit.success() {
-                    eprintln!("QEMU process exited with error: {exit}");
+                    error!("QEMU process exited with error: {exit}");
                 }
                 return;
             }
         }
 
         if let Err(e) = self.child.kill() {
-            eprintln!("failed to kill QEMU process: {e}");
+            error!("failed to kill QEMU process: {e}");
         };
     }
 }
