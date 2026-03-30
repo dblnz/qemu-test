@@ -6,8 +6,10 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 env_logger = "0.11.10"
+linkme = "0.3"
 log = "0.4.29"
 qapi = { git = "https://github.com/mkulke/qapi-rs.git", ref = "7710f36", features = ["qmp"] }
 rayon = "1"
+strum = { version = "0.27", features = ["derive"] }
 tempfile = "3"
 test-macro = { path = "test-macro" }

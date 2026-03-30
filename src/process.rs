@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::{debug, error};
 use qapi::qmp::{self, RunState};
 use qapi::{Qmp, Stream};
@@ -6,18 +6,23 @@ use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::thread;
 use std::time::{Duration, Instant};
+use std::{env, thread};
+use strum::Display;
 use tempfile::TempDir;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+const QEMU_BIN: &str = "qemu-system-x86_64";
 
-enum Accelerator {
+pub(crate) enum Accelerator {
     Kvm,
 }
 
-enum Machine {
+#[derive(Display)]
+#[strum(serialize_all = "lowercase")]
+pub(crate) enum Machine {
     Pc,
+    Q35,
 }
 
 struct Unconnected {
@@ -96,12 +101,7 @@ impl From<&GuestConfig> for Vec<String> {
             },
         ]);
 
-        args.extend([
-            "-M".into(),
-            match cfg.machine {
-                Machine::Pc => "pc".into(),
-            },
-        ]);
+        args.extend(["-M".into(), cfg.machine.to_string()]);
 
         if let Some(payload) = &cfg.payload {
             match payload {
@@ -130,6 +130,8 @@ impl From<&GuestConfig> for Vec<String> {
             args.extend(["-incoming".into(), "defer".into()]);
         }
 
+        debug!("generated QEMU command line: {}", args.join(" "));
+
         args
     }
 }
@@ -150,6 +152,8 @@ pub(crate) struct QemuConfig<'a> {
     temp_dir: &'a TempDir,
     payload: &'a QemuPayload,
     incoming: bool,
+    machine: Machine,
+    smp: Option<u8>,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -158,6 +162,8 @@ impl<'a> QemuConfig<'a> {
             temp_dir,
             payload,
             incoming: false,
+            machine: Machine::Pc,
+            smp: None,
         }
     }
 
@@ -166,7 +172,19 @@ impl<'a> QemuConfig<'a> {
             temp_dir,
             payload,
             incoming: true,
+            machine: Machine::Pc,
+            smp: None,
         }
+    }
+
+    pub fn with_machine(mut self, machine: Machine) -> Self {
+        self.machine = machine;
+        self
+    }
+
+    pub fn with_smp(mut self, smp: u8) -> Self {
+        self.smp = Some(smp);
+        self
     }
 }
 
@@ -176,13 +194,15 @@ impl QemuProcess {
             temp_dir,
             payload,
             incoming,
+            machine,
+            smp,
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
         let serial_sock_path = temp_dir.path().join("serial.sock");
 
-        let (ram_mb, smp) = match payload {
-            QemuPayload::GuestBin(_) => (32, None),
-            QemuPayload::Kernel(_) => (256, Some(2)),
+        let ram_mb = match payload {
+            QemuPayload::GuestBin(_) => 32,
+            QemuPayload::Kernel(_) => 256,
         };
 
         let cfg = GuestConfig {
@@ -191,16 +211,23 @@ impl QemuProcess {
             qmp_sock_path: qmp_sock_path.clone(),
             payload: Some(payload.clone()),
             accel: Accelerator::Kvm,
-            machine: Machine::Pc,
+            machine,
             smp,
             incoming,
         };
 
         let args: Vec<String> = (&cfg).into();
-        let child = Command::new("qemu-system-x86_64")
+
+        let program: PathBuf = env::var("QEMU_BIN")
+            .unwrap_or_else(|_| QEMU_BIN.into())
+            .into();
+
+        let child = Command::new(&program)
             .args(args)
             .spawn()
-            .context("failed to start qemu-system-x86_64")?;
+            .context(format!("failed to start process: {:?}", program))?;
+
+        debug!("spawned QEMU with PID {}", child.id());
 
         let qmp_sock = Socket::new(qmp_sock_path);
         let stream = qmp_sock.connect(TIMEOUT)?.state.stream;
@@ -289,6 +316,8 @@ impl Drop for QemuProcess {
             Ok(exit) => {
                 if !exit.success() {
                     error!("QEMU process exited with error: {exit}");
+                } else {
+                    debug!("QEMU process exited with status: {exit}");
                 }
                 return;
             }
@@ -297,5 +326,7 @@ impl Drop for QemuProcess {
         if let Err(e) = self.child.kill() {
             error!("failed to kill QEMU process: {e}");
         };
+
+        debug!("killed QEMU process with PID {}", self.child.id());
     }
 }

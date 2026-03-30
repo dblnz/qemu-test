@@ -23,5 +23,5 @@ clean:
 	cargo clean
 
 lint:
-	cargo fmt --check
+	cargo fmt --check && \
 	cargo clippy -- -D warnings

@@ -1,7 +1,8 @@
-use crate::process::{QemuConfig, QemuPayload, QemuProcess};
+use crate::process::{Machine, QemuConfig, QemuPayload, QemuProcess};
 use anyhow::{Context, Result};
 use log::debug;
 use qapi::qmp;
+use std::fs;
 use test_macro::test_fn;
 
 const GUEST_BIN: &[u8] = include_bytes!("../../payload/guest.bin");
@@ -12,7 +13,7 @@ const EXPECTED_OUTPUT: &str = "HELLO FROM GUEST";
 pub(crate) fn test_simple_guest_bin() -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let guest_bin_path = tmp_dir.path().join("guest.bin");
-    std::fs::write(&guest_bin_path, GUEST_BIN).context("failed to write guest binary")?;
+    fs::write(&guest_bin_path, GUEST_BIN).context("failed to write guest binary")?;
     let payload = QemuPayload::GuestBin(guest_bin_path);
     let cfg = QemuConfig::new(&tmp_dir, &payload);
     let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
@@ -30,11 +31,13 @@ pub(crate) fn test_simple_guest_bin() -> Result<()> {
     Ok(())
 }
 
-#[test_fn]
-pub(crate) fn test_kernel_boot() -> Result<()> {
+#[test_fn(machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4})]
+pub(crate) fn test_kernel_boot(machine: Machine, smp: u8) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let payload = QemuPayload::Kernel(KERNEL.into());
-    let cfg = QemuConfig::new(&tmp_dir, &payload);
+    let cfg = QemuConfig::new(&tmp_dir, &payload)
+        .with_machine(machine)
+        .with_smp(smp);
     let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
 
     let status = process

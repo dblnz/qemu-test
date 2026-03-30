@@ -1,17 +1,13 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
+use linkme::distributed_slice;
 use rayon::prelude::*;
 use std::env;
 
 mod process;
 mod tests;
 
-type TestFn = fn() -> Result<()>;
-
-const TESTS: &[TestFn] = &[
-    tests::basic::test_simple_guest_bin,
-    tests::basic::test_kernel_boot,
-    tests::migration::test_live_migration,
-];
+#[distributed_slice]
+pub static TESTS: [fn() -> Result<()>];
 
 fn main() -> Result<()> {
     env_logger::init();
