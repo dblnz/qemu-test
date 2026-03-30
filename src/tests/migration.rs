@@ -51,7 +51,7 @@ pub(crate) fn test_live_migration() -> Result<()> {
         .execute(&qmp::migrate {
             uri: Some(format!("unix:{}", mig_sock.display())),
             channels: None,
-            detach: Some(true),
+            detach: None,
             resume: None,
         })
         .context("source: migrate failed")?;
