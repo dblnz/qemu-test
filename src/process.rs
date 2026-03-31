@@ -43,6 +43,13 @@ struct Socket<State> {
     state: State,
 }
 
+#[derive(Display)]
+#[strum(serialize_all = "lowercase")]
+pub(crate) enum CpuModel {
+    Host,
+    Qemu64,
+}
+
 impl Socket<Unconnected> {
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -78,17 +85,16 @@ struct GuestConfig {
     payload: Option<QemuPayload>,
     smp: Option<u8>,
     incoming: bool,
+    cpu_model: Option<CpuModel>,
 }
 
 impl From<&GuestConfig> for Vec<String> {
     fn from(cfg: &GuestConfig) -> Self {
-        let mut args = vec![
-            "-display".into(),
-            "none".into(),
-            "-no-reboot".into(),
-            "-cpu".into(),
-            "host".into(),
-        ];
+        let mut args = vec!["-display".into(), "none".into(), "-no-reboot".into()];
+
+        if let Some(cpu) = &cfg.cpu_model {
+            args.extend(["-cpu".into(), cpu.to_string()]);
+        }
 
         args.extend([
             "-qmp".into(),
@@ -156,6 +162,7 @@ pub(crate) struct QemuConfig<'a> {
     incoming: bool,
     machine: Machine,
     smp: Option<u8>,
+    cpu_model: Option<CpuModel>,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -166,6 +173,7 @@ impl<'a> QemuConfig<'a> {
             incoming: false,
             machine: Machine::Pc,
             smp: None,
+            cpu_model: None,
         }
     }
 
@@ -176,6 +184,7 @@ impl<'a> QemuConfig<'a> {
             incoming: true,
             machine: Machine::Pc,
             smp: None,
+            cpu_model: None,
         }
     }
 
@@ -188,6 +197,11 @@ impl<'a> QemuConfig<'a> {
         self.smp = Some(smp);
         self
     }
+
+    pub fn with_cpu_model(mut self, cpu_model: CpuModel) -> Self {
+        self.cpu_model = Some(cpu_model);
+        self
+    }
 }
 
 impl QemuProcess {
@@ -198,6 +212,7 @@ impl QemuProcess {
             incoming,
             machine,
             smp,
+            cpu_model,
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
         let serial_sock_path = temp_dir.path().join("serial.sock");
@@ -223,6 +238,7 @@ impl QemuProcess {
             machine,
             smp,
             incoming,
+            cpu_model,
         };
 
         let args: Vec<String> = (&cfg).into();

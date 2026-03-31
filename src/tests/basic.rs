@@ -1,4 +1,4 @@
-use crate::process::{Machine, QemuConfig, QemuPayload, QemuProcess};
+use crate::process::{CpuModel, Machine, QemuConfig, QemuPayload, QemuProcess};
 use anyhow::{Context, Result};
 use log::debug;
 use qapi::qmp;
@@ -9,7 +9,7 @@ const GUEST_BIN: &[u8] = include_bytes!("../../payload/guest.bin");
 const KERNEL: &str = "payload/vmlinuz-virt";
 const EXPECTED_OUTPUT: &str = "HELLO FROM GUEST";
 
-#[test_fn]
+#[test_fn()]
 pub(crate) fn test_simple_guest_bin() -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let guest_bin_path = tmp_dir.path().join("guest.bin");
@@ -31,13 +31,14 @@ pub(crate) fn test_simple_guest_bin() -> Result<()> {
     Ok(())
 }
 
-#[test_fn(machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4})]
-pub(crate) fn test_kernel_boot(machine: Machine, smp: u8) -> Result<()> {
+#[test_fn(machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4}, cpu = {CpuModel::Qemu64, CpuModel::Host})]
+pub(crate) fn test_kernel_boot(machine: Machine, smp: u8, cpu: CpuModel) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let payload = QemuPayload::Kernel(KERNEL.into());
     let cfg = QemuConfig::new(&tmp_dir, &payload)
         .with_machine(machine)
-        .with_smp(smp);
+        .with_smp(smp)
+        .with_cpu_model(cpu);
     let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
 
     let status = process
