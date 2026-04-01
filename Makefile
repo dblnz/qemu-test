@@ -1,15 +1,20 @@
 GUEST_ASM = src/boot.asm
 GUEST_BIN = payload/guest.bin
 VMLINUZ = payload/vmlinuz-virt
+OS_IMAGE = payload/os-image.qcow2
 ALPINE_URL = https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/alpine-netboot-3.23.3-x86_64.tar.gz
+UBUNTU_URL = https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img
 
 .PHONY: build run clean lint
 
-build: $(GUEST_BIN) $(VMLINUZ)
+build: $(GUEST_BIN) $(VMLINUZ) $(OS_IMAGE)
 	cargo build
 
 run: build
 	cargo run
+
+$(OS_IMAGE):
+	wget -q $(UBUNTU_URL) -O $@
 
 $(VMLINUZ):
 	cd payload && \

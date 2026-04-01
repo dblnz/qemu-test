@@ -1,4 +1,4 @@
-use crate::process::{CpuModel, Machine, QemuConfig, QemuPayload, QemuProcess};
+use crate::process::{CpuModel, ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess};
 use anyhow::{Context, Result};
 use log::debug;
 use qapi::qmp;
@@ -24,8 +24,9 @@ pub(crate) fn test_simple_guest_bin() -> Result<()> {
         .context("query_status failed")?;
     debug!("VM status: {:?}", status.status);
 
+    let expected_output = ExpectedOutput::SubString(EXPECTED_OUTPUT.into());
     process
-        .poll_line(EXPECTED_OUTPUT)
+        .poll_line(expected_output)
         .context("expected output not found")?;
 
     Ok(())
@@ -47,8 +48,9 @@ pub(crate) fn test_kernel_boot(machine: Machine, smp: u8, cpu: CpuModel) -> Resu
         .context("query_status failed")?;
     debug!("VM status: {:?}", status.status);
 
+    let expected_output = ExpectedOutput::SubString("Hypervisor detected".into());
     process
-        .poll_line("Hypervisor detected")
+        .poll_line(expected_output)
         .context("kernel boot output not found")?;
 
     Ok(())

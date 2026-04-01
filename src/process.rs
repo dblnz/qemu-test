@@ -1,8 +1,9 @@
 use crate::config::CONFIG;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use log::{debug, error};
 use qapi::qmp::{self, RunState};
 use qapi::{Qmp, Stream};
+use regex::Regex;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -16,6 +17,11 @@ use tempfile::TempDir;
 const TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_QEMU_BIN: &str = "qemu-system-x86_64";
 const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
+
+pub(crate) enum ExpectedOutput {
+    SubString(String),
+    Pattern(Regex),
+}
 
 #[derive(Display, EnumString, Clone, Copy)]
 #[strum(serialize_all = "lowercase")]
@@ -86,6 +92,8 @@ struct GuestConfig {
     smp: Option<u8>,
     incoming: bool,
     cpu_model: Option<CpuModel>,
+    cloud_init: Option<PathBuf>,
+    ssh_port: Option<u16>,
 }
 
 impl From<&GuestConfig> for Vec<String> {
@@ -124,6 +132,17 @@ impl From<&GuestConfig> for Vec<String> {
                         "console=ttyS0 earlyprintk=serial panic=-1".into(),
                     ]);
                 }
+                QemuPayload::DiskImage(path) => {
+                    args.extend([
+                        "-drive".into(),
+                        format!(
+                            "file={},format=qcow2,if=none,id=os,snapshot=on",
+                            path.display()
+                        ),
+                        "-device".into(),
+                        "virtio-blk-pci,drive=os".into(),
+                    ]);
+                }
             }
         }
 
@@ -137,6 +156,27 @@ impl From<&GuestConfig> for Vec<String> {
             args.extend(["-incoming".into(), "defer".into()]);
         }
 
+        if let Some(ci) = &cfg.cloud_init {
+            args.extend([
+                "-drive".into(),
+                format!("file={},format=raw,if=none,id=cidata", ci.display()),
+                "-device".into(),
+                "virtio-blk-pci,drive=cidata".into(),
+            ]);
+        }
+
+        if let Some(port) = cfg.ssh_port {
+            args.extend([
+                "-netdev".into(),
+                format!("type=user,id=user-net,hostfwd=tcp::{port}-:22"),
+                "-device".into(),
+                format!(
+                    "virtio-net-pci,mac={},netdev=user-net",
+                    crate::cloud_init::GUEST_MAC
+                ),
+            ]);
+        }
+
         debug!("generated QEMU command line: {}", args.join(" "));
 
         args
@@ -147,6 +187,7 @@ impl From<&GuestConfig> for Vec<String> {
 pub(crate) enum QemuPayload {
     GuestBin(PathBuf),
     Kernel(PathBuf),
+    DiskImage(PathBuf),
 }
 
 pub(crate) struct QemuProcess {
@@ -163,6 +204,8 @@ pub(crate) struct QemuConfig<'a> {
     machine: Machine,
     smp: Option<u8>,
     cpu_model: Option<CpuModel>,
+    cloud_init: Option<PathBuf>,
+    ssh_port: Option<u16>,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -174,6 +217,8 @@ impl<'a> QemuConfig<'a> {
             machine: Machine::Pc,
             smp: None,
             cpu_model: None,
+            cloud_init: None,
+            ssh_port: None,
         }
     }
 
@@ -185,6 +230,8 @@ impl<'a> QemuConfig<'a> {
             machine: Machine::Pc,
             smp: None,
             cpu_model: None,
+            cloud_init: None,
+            ssh_port: None,
         }
     }
 
@@ -202,6 +249,16 @@ impl<'a> QemuConfig<'a> {
         self.cpu_model = Some(cpu_model);
         self
     }
+
+    pub fn with_cloud_init(mut self, path: PathBuf) -> Self {
+        self.cloud_init = Some(path);
+        self
+    }
+
+    pub fn with_ssh_port(mut self, port: u16) -> Self {
+        self.ssh_port = Some(port);
+        self
+    }
 }
 
 impl QemuProcess {
@@ -213,6 +270,8 @@ impl QemuProcess {
             machine,
             smp,
             cpu_model,
+            cloud_init,
+            ssh_port,
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
         let serial_sock_path = temp_dir.path().join("serial.sock");
@@ -220,6 +279,7 @@ impl QemuProcess {
         let ram_mb = match payload {
             QemuPayload::GuestBin(_) => 32,
             QemuPayload::Kernel(_) => 256,
+            QemuPayload::DiskImage(_) => 1024,
         };
 
         let accel = match CONFIG.accel() {
@@ -239,6 +299,8 @@ impl QemuProcess {
             smp,
             incoming,
             cpu_model,
+            cloud_init,
+            ssh_port,
         };
 
         let args: Vec<String> = (&cfg).into();
@@ -280,23 +342,34 @@ impl QemuProcess {
         &mut self.qmp
     }
 
-    pub fn poll_line(&mut self, expected: &str) -> Result<()> {
-        let mut output = String::new();
+    pub fn poll_line(&mut self, expected: ExpectedOutput) -> Result<()> {
+        self.poll_line_timeout(expected, TIMEOUT)
+    }
+
+    pub fn poll_line_timeout(&mut self, expected: ExpectedOutput, timeout: Duration) -> Result<()> {
         let start = Instant::now();
 
         loop {
-            if start.elapsed() > TIMEOUT {
-                bail!("timeout waiting for {expected}");
+            if start.elapsed() > timeout {
+                bail!("timeout waiting for expected output");
             }
 
             let mut line = String::new();
             match self.serial_reader.read_line(&mut line) {
-                Ok(0) => bail!("connection closed while waiting for {expected}"),
+                Ok(0) => bail!("connection closed while waiting for expected output"),
                 Ok(_) => {
-                    output.push_str(&line);
-                    if output.contains(expected) {
-                        debug!("[serial] {line}");
-                        return Ok(());
+                    debug!("[serial] {}", line.trim_end());
+                    match expected {
+                        ExpectedOutput::SubString(ref s) => {
+                            if line.contains(s) {
+                                return Ok(());
+                            }
+                        }
+                        ExpectedOutput::Pattern(ref r) => {
+                            if r.is_match(&line) {
+                                return Ok(());
+                            }
+                        }
                     }
                 }
                 Err(e)

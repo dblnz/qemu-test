@@ -3,6 +3,7 @@ use config::CONFIG;
 use linkme::distributed_slice;
 use rayon::prelude::*;
 
+mod cloud_init;
 mod config;
 mod process;
 mod tests;

@@ -1,4 +1,4 @@
-use crate::process::{QemuConfig, QemuPayload, QemuProcess};
+use crate::process::{ExpectedOutput, QemuConfig, QemuPayload, QemuProcess};
 use anyhow::{Context, Result};
 use log::debug;
 use qapi::qmp::{self, RunState};
@@ -63,7 +63,8 @@ pub(crate) fn test_live_migration() -> Result<()> {
     debug!("destination VM status: {:?}", expected_state);
 
     // Verify destination is healthy by reading serial output
-    dst.poll_line(EXPECTED_OUTPUT)
+    let expected_output = ExpectedOutput::SubString(EXPECTED_OUTPUT.into());
+    dst.poll_line(expected_output)
         .context("destination: guest not producing serial output after migration")?;
 
     Ok(())
