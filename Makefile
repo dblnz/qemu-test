@@ -1,20 +1,23 @@
 GUEST_ASM = src/boot.asm
 GUEST_BIN = payload/guest.bin
 VMLINUZ = payload/vmlinuz-virt
+INITRD = payload/initrd.img
+INIT_BIN = payload/init
+INIT_SRC = src/lm_init.c
 OS_IMAGE = payload/os-image.qcow2
 OVMF_CODE = payload/OVMF_CODE.fd
 ALPINE_URL = https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/alpine-netboot-3.23.3-x86_64.tar.gz
 UBUNTU_URL = https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img
 OVMF_DEB_URL = http://security.debian.org/debian-security/pool/updates/main/e/edk2/ovmf_2022.11-6+deb12u1_all.deb
 QEMU_BIN ?= qemu-system-x86_64
-REQUIRED_TOOLS = cargo nasm wget $(QEMU_BIN) ssh-keygen mkdosfs mcopy
+REQUIRED_TOOLS = cargo nasm wget $(QEMU_BIN) ssh-keygen mkdosfs mcopy gcc cpio gzip
 
 .PHONY: build run clean lint check-tools
 
 check-tools:
 	@$(foreach tool,$(REQUIRED_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
 
-build: check-tools $(GUEST_BIN) $(VMLINUZ) $(OS_IMAGE) $(OVMF_CODE)
+build: check-tools $(GUEST_BIN) $(VMLINUZ) $(INITRD) $(OS_IMAGE) $(OVMF_CODE)
 	cargo build
 
 run: build
@@ -36,8 +39,18 @@ $(VMLINUZ):
 $(GUEST_BIN): $(GUEST_ASM)
 	nasm -f bin -o $@ $<
 
+$(INIT_BIN): $(INIT_SRC)
+	gcc -static -o $@ $<
+
+$(INITRD): $(INIT_BIN)
+	d=$$(mktemp -d) && \
+	mkdir -p $$d/{dev,proc,sys} && \
+	cp $< $$d/init && \
+	(cd $$d && find . | cpio --quiet -o -H newc | gzip -9) > $@ && \
+	rm -rf $$d
+
 clean:
-	rm -f $(GUEST_BIN)
+	rm -f $(GUEST_BIN) $(INIT_BIN) $(INITRD)
 	cargo clean
 
 lint:

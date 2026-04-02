@@ -30,7 +30,7 @@ pub(crate) enum Accelerator {
     Mshv,
 }
 
-#[derive(Display)]
+#[derive(Clone, Display)]
 #[strum(serialize_all = "lowercase")]
 pub(crate) enum Machine {
     Pc,
@@ -49,7 +49,7 @@ struct Socket<State> {
     state: State,
 }
 
-#[derive(Display)]
+#[derive(Clone, Display)]
 #[strum(serialize_all = "lowercase")]
 pub(crate) enum CpuModel {
     Host,
@@ -125,13 +125,16 @@ impl From<&GuestConfig> for Vec<String> {
                     args.push("-drive".into());
                     args.push(format!("format=raw,file={},media=disk", path.display()));
                 }
-                QemuPayload::Kernel(path) => {
+                QemuPayload::Kernel { kernel, initrd } => {
                     args.extend([
                         "-kernel".into(),
-                        format!("{}", path.display()),
+                        format!("{}", kernel.display()),
                         "-append".into(),
                         "console=ttyS0 earlyprintk=serial panic=-1".into(),
                     ]);
+                    if let Some(initrd) = initrd {
+                        args.extend(["-initrd".into(), format!("{}", initrd.display())]);
+                    }
                 }
                 QemuPayload::DiskImage(path) => {
                     args.extend([
@@ -194,7 +197,10 @@ impl From<&GuestConfig> for Vec<String> {
 #[derive(Clone)]
 pub(crate) enum QemuPayload {
     GuestBin(PathBuf),
-    Kernel(PathBuf),
+    Kernel {
+        kernel: PathBuf,
+        initrd: Option<PathBuf>,
+    },
     DiskImage(PathBuf),
 }
 
@@ -205,6 +211,7 @@ pub(crate) struct QemuProcess {
     accel: Accelerator,
 }
 
+#[derive(Clone)]
 pub(crate) struct QemuConfig<'a> {
     temp_dir: &'a TempDir,
     payload: &'a QemuPayload,
@@ -232,10 +239,10 @@ impl<'a> QemuConfig<'a> {
         }
     }
 
-    pub fn new_incoming(temp_dir: &'a TempDir, payload: &'a QemuPayload) -> Self {
-        let mut cfg = Self::new(temp_dir, payload);
-        cfg.incoming = true;
-        cfg
+    pub fn with_incoming(mut self, temp_dir: &'a TempDir) -> Self {
+        self.incoming = true;
+        self.temp_dir = temp_dir;
+        self
     }
 
     pub fn with_machine(mut self, machine: Machine) -> Self {
@@ -287,7 +294,7 @@ impl QemuProcess {
 
         let ram_mb = match payload {
             QemuPayload::GuestBin(_) => 32,
-            QemuPayload::Kernel(_) => 256,
+            QemuPayload::Kernel { .. } => 256,
             QemuPayload::DiskImage(_) => 1024,
         };
 

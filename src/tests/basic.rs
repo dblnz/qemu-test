@@ -35,7 +35,10 @@ pub(crate) fn test_simple_guest_bin() -> Result<()> {
 #[test_fn(machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4}, cpu = {CpuModel::Qemu64, CpuModel::Host})]
 pub(crate) fn test_kernel_boot(machine: Machine, smp: u8, cpu: CpuModel) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
-    let payload = QemuPayload::Kernel(KERNEL.into());
+    let payload = QemuPayload::Kernel {
+        kernel: KERNEL.into(),
+        initrd: None,
+    };
     let cfg = QemuConfig::new(&tmp_dir, &payload)
         .with_machine(machine)
         .with_smp(smp)
