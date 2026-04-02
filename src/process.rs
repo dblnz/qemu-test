@@ -1,6 +1,6 @@
 use crate::config::CONFIG;
 use anyhow::{Context, Result, bail};
-use log::{debug, error};
+use log::debug;
 use qapi::qmp::{self, RunState};
 use qapi::{Qmp, Stream};
 use regex::Regex;
@@ -94,6 +94,7 @@ struct GuestConfig {
     cpu_model: Option<CpuModel>,
     cloud_init: Option<PathBuf>,
     ssh_port: Option<u16>,
+    ovmf: Option<PathBuf>,
 }
 
 impl From<&GuestConfig> for Vec<String> {
@@ -156,6 +157,13 @@ impl From<&GuestConfig> for Vec<String> {
             args.extend(["-incoming".into(), "defer".into()]);
         }
 
+        if let Some(path) = &cfg.ovmf {
+            args.extend([
+                "-drive".into(),
+                format!("file={},format=raw,if=pflash,readonly=on", path.display()),
+            ]);
+        }
+
         if let Some(ci) = &cfg.cloud_init {
             args.extend([
                 "-drive".into(),
@@ -206,6 +214,7 @@ pub(crate) struct QemuConfig<'a> {
     cpu_model: Option<CpuModel>,
     cloud_init: Option<PathBuf>,
     ssh_port: Option<u16>,
+    ovmf: Option<PathBuf>,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -219,20 +228,14 @@ impl<'a> QemuConfig<'a> {
             cpu_model: None,
             cloud_init: None,
             ssh_port: None,
+            ovmf: None,
         }
     }
 
     pub fn new_incoming(temp_dir: &'a TempDir, payload: &'a QemuPayload) -> Self {
-        Self {
-            temp_dir,
-            payload,
-            incoming: true,
-            machine: Machine::Pc,
-            smp: None,
-            cpu_model: None,
-            cloud_init: None,
-            ssh_port: None,
-        }
+        let mut cfg = Self::new(temp_dir, payload);
+        cfg.incoming = true;
+        cfg
     }
 
     pub fn with_machine(mut self, machine: Machine) -> Self {
@@ -259,6 +262,11 @@ impl<'a> QemuConfig<'a> {
         self.ssh_port = Some(port);
         self
     }
+
+    pub fn with_ovmf(mut self, path: PathBuf) -> Self {
+        self.ovmf = Some(path);
+        self
+    }
 }
 
 impl QemuProcess {
@@ -272,6 +280,7 @@ impl QemuProcess {
             cpu_model,
             cloud_init,
             ssh_port,
+            ovmf,
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
         let serial_sock_path = temp_dir.path().join("serial.sock");
@@ -301,6 +310,7 @@ impl QemuProcess {
             cpu_model,
             cloud_init,
             ssh_port,
+            ovmf,
         };
 
         let args: Vec<String> = (&cfg).into();
@@ -396,7 +406,7 @@ impl QemuProcess {
             if status.status == expected_state {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(200));
         }
         Ok(())
     }
@@ -412,8 +422,11 @@ impl Drop for QemuProcess {
             let _ = self.child.kill();
         } else {
             debug!("shutting down QEMU (PID {})", self.child.id());
+            // qmp::quit may fail to deserialize the response (untagged enum on q35 + ovmf + qemu 6.2),
             if let Err(e) = self.qmp.execute(&qmp::quit {}) {
-                error!("QMP quit failed: {e}, killing process");
+                debug!("qmp::quit failed: {e}");
+                debug!("falling back to killing QEMU (PID {})", self.child.id());
+                thread::sleep(Duration::from_millis(200));
                 let _ = self.child.kill();
             }
         }

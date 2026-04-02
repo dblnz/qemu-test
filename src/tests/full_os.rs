@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use test_macro::test_fn;
 
 const OS_IMAGE: &str = "payload/os-image.qcow2";
+const OVMF_CODE: &str = "payload/OVMF_CODE.fd";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(30);
 const SSH_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -62,8 +63,20 @@ fn ssh_command(key_path: &Path, port: u16, user: &str, command: &str) -> Result<
     }
 }
 
-#[test_fn(cpu = Cpu::Host, machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4})]
-pub(crate) fn test_os_boot(cpu: Cpu, machine: Machine, smp: u8) -> Result<()> {
+#[test_fn(
+    cpu = Cpu::Host,
+    machine = {Machine::Pc, Machine::Q35},
+    smp = {1, 2, 4},
+    ovmf = false,
+)]
+// OVMF requires UEFI support, which is not available on Machine::Pc
+#[test_fn(
+    cpu = Cpu::Host,
+    machine = Machine::Q35,
+    smp = {1, 2, 4},
+    ovmf = true,
+)]
+pub(crate) fn test_os_boot(cpu: Cpu, machine: Machine, smp: u8, ovmf: bool) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
 
     let ci = CloudInitDisk::create(tmp_dir.path()).context("failed to create cloud-init disk")?;
@@ -71,12 +84,15 @@ pub(crate) fn test_os_boot(cpu: Cpu, machine: Machine, smp: u8) -> Result<()> {
     debug!("using SSH port {ssh_port}");
 
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
-    let cfg = QemuConfig::new(&tmp_dir, &payload)
+    let mut cfg = QemuConfig::new(&tmp_dir, &payload)
         .with_machine(machine)
         .with_cpu_model(cpu)
         .with_smp(smp)
         .with_cloud_init(ci.path)
         .with_ssh_port(ssh_port);
+    if ovmf {
+        cfg = cfg.with_ovmf(OVMF_CODE.into());
+    }
     let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
 
     let status = process
