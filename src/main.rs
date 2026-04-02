@@ -25,7 +25,7 @@ fn run_test(entry: &TestEntry) -> Result<()> {
     let elapsed = start.elapsed();
     result
         .inspect(|_| println!("PASS: {label} ({:.2}s)", elapsed.as_secs_f64()))
-        .inspect_err(|e| eprintln!("FAIL: {label}: {e} ({:.2}s)", elapsed.as_secs_f64()))
+        .inspect_err(|e| println!("FAIL: {label}: {e} ({:.2}s)", elapsed.as_secs_f64()))
 }
 
 fn main() -> Result<()> {
