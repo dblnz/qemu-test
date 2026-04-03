@@ -2,7 +2,7 @@ use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::{
     CpuModel as Cpu, ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use log::debug;
 use qapi::qmp;
 use std::path::Path;
@@ -131,7 +131,7 @@ pub(crate) fn test_os_boot(
         SSH_TIMEOUT,
     )?;
     debug!("guest hostname: {hostname}");
-    assert_eq!(hostname, "cloud", "unexpected hostname: {hostname}");
+    ensure!(hostname == "cloud", "unexpected hostname: {hostname}");
 
     Ok(())
 }
