@@ -9,8 +9,8 @@ mod config;
 mod process;
 mod tests;
 
-// label, test function
-pub type TestEntry = (fn() -> String, fn() -> Result<()>);
+// label, test function, skip reason (None = run by default)
+pub type TestEntry = (fn() -> String, fn() -> Result<()>, Option<&'static str>);
 
 #[distributed_slice]
 pub static TESTS: [TestEntry];
@@ -44,10 +44,14 @@ fn main() -> Result<()> {
     let mut tests: Vec<&TestEntry> = TESTS
         .iter()
         .filter(|entry| {
+            let label = entry.0();
             if filters.is_empty() {
+                if let Some(reason) = entry.2 {
+                    println!("SKIP: {label} ({reason})");
+                    return false;
+                }
                 return true;
             }
-            let label = entry.0();
             filters.iter().any(|f| label.contains(f))
         })
         .collect();

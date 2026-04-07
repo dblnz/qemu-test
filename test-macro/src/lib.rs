@@ -31,29 +31,42 @@ impl Parse for ParamSpec {
 
 /// Registers a test function with optional parameterization.
 ///
-/// Supports cartesian product expansion:
+/// Supports cartesian product expansion and skip:
 /// ```ignore
 /// #[test_fn(machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4})]
 /// fn test_kernel_boot(machine: Machine, smp: u8) -> Result<()> { ... }
+///
+/// #[test_fn(skip = "requires tap networking")]
+/// fn test_tap_migration() -> Result<()> { ... }
 /// ```
 /// Generates one `TestEntry` per combination, auto-registered via `linkme`.
 #[proc_macro_attribute]
 pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
 
-    let own_specs = parse_specs(attr);
+    let (own_specs, skip_reason) = extract_skip(parse_specs(attr));
 
     // Collect specs from remaining stacked #[test_fn(...)] attributes
     let mut all_spec_sets = vec![own_specs];
     let mut other_attrs = Vec::new();
+    let mut skip = skip_reason;
 
     for a in &input.attrs {
         if a.path().is_ident("test_fn") {
-            all_spec_sets.push(parse_specs_from_attr(a));
+            let (specs, sr) = extract_skip(parse_specs_from_attr(a));
+            all_spec_sets.push(specs);
+            if sr.is_some() {
+                skip = sr;
+            }
         } else {
             other_attrs.push(a.clone());
         }
     }
+
+    let skip_token = match &skip {
+        Some(reason) => quote! { Some(#reason) },
+        None => quote! { None },
+    };
 
     let name = &input.sig.ident;
     let name_str = name.to_string();
@@ -87,7 +100,7 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #[linkme::distributed_slice(crate::TESTS)]
-            static #static_name: crate::TestEntry = (#label_fn, #name);
+            static #static_name: crate::TestEntry = (#label_fn, #name, #skip_token);
         };
         return expanded.into();
     }
@@ -117,7 +130,7 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #[linkme::distributed_slice(crate::TESTS)]
-            static #static_name: crate::TestEntry = (#label_fn, #fn_name);
+            static #static_name: crate::TestEntry = (#label_fn, #fn_name, #skip_token);
         });
     }
 
@@ -126,6 +139,29 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     expanded.into()
+}
+
+/// Extracts a `skip = "reason"` spec from the list, returning remaining specs
+/// and the optional skip reason string.
+fn extract_skip(specs: Vec<ParamSpec>) -> (Vec<ParamSpec>, Option<String>) {
+    let mut remaining = Vec::new();
+    let mut skip_reason = None;
+    for spec in specs {
+        if spec.name == "skip" {
+            if let Some(Expr::Lit(lit)) = spec.values.first() {
+                if let syn::Lit::Str(s) = &lit.lit {
+                    skip_reason = Some(s.value());
+                } else {
+                    panic!("skip value must be a string literal");
+                }
+            } else {
+                panic!("skip value must be a string literal");
+            }
+        } else {
+            remaining.push(spec);
+        }
+    }
+    (remaining, skip_reason)
 }
 
 fn parse_specs(attr: TokenStream) -> Vec<ParamSpec> {

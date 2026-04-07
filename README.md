@@ -38,6 +38,9 @@ This will run only tests with "migration", "simple" or "smp=1" in their label (p
 ```bash
 make run TEST_JOBS=2 TEST_FILTER=migration,simple,smp=1
 ```
+## Skipping
+
+Tests can be annotated with `#[test_fn(skip = "reason")]` to skip them with a reason. Note that tests that are selected by the filter explicitly will be run even if they are annotated with skip.
 
 ## Extend
 

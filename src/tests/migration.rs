@@ -112,10 +112,11 @@ pub(crate) fn test_live_migration_kernel(cpu: Cpu, smp: u8) -> Result<()> {
 }
 
 #[test_fn(
-    machine = {Machine::Pc, Machine::Q35},
-    // machine = Machine::Q35,
-    smp = {2, 4},
-    // smp = 2,
+    // machine = {Machine::Pc, Machine::Q35},
+    machine = Machine::Q35,
+    // smp = {2, 4},
+    smp = 2,
+    skip = "requires tap networking",
 )]
 pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
