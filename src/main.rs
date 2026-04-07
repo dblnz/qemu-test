@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use config::CONFIG;
 use linkme::distributed_slice;
 use rand::seq::SliceRandom;
@@ -15,8 +15,6 @@ pub type TestEntry = (fn() -> String, fn() -> Result<()>, Option<&'static str>);
 #[distributed_slice]
 pub static TESTS: [TestEntry];
 
-const DEFAULT_TEST_JOBS: usize = 1;
-
 fn run_test(entry: &TestEntry) -> Result<()> {
     let label = entry.0();
     println!("TEST: {label}");
@@ -31,10 +29,7 @@ fn run_test(entry: &TestEntry) -> Result<()> {
 fn main() -> Result<()> {
     env_logger::init();
 
-    let test_jobs = match CONFIG.test_jobs() {
-        Some(v) => v.parse().context("invalid TEST_JOBS value")?,
-        None => DEFAULT_TEST_JOBS,
-    };
+    let test_jobs = CONFIG.test_jobs()?;
 
     let filters: Vec<&str> = CONFIG
         .test_filter()

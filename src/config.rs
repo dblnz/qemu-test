@@ -18,6 +18,7 @@ pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
 });
 
 const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
+const DEFAULT_TEST_JOBS: usize = 1;
 
 impl Config {
     pub fn qemu_bin(&self) -> Option<&str> {
@@ -34,8 +35,13 @@ impl Config {
         Ok(accel)
     }
 
-    pub fn test_jobs(&self) -> Option<&str> {
-        self.test_jobs.as_deref()
+    pub fn test_jobs(&self) -> Result<usize> {
+        let Some(value) = self.test_jobs.as_deref() else {
+            return Ok(DEFAULT_TEST_JOBS);
+        };
+
+        let jobs = value.parse().context("invalid TEST_JOBS value")?;
+        Ok(jobs)
     }
 
     pub fn test_filter(&self) -> Option<&str> {
