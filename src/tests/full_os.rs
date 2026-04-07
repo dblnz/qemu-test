@@ -2,6 +2,7 @@ use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::{
     CpuModel as Cpu, ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess,
 };
+use crate::util::SshConfig;
 use anyhow::{Context, Result, bail, ensure};
 use log::debug;
 use qapi::qmp;
@@ -88,15 +89,17 @@ pub(crate) fn test_os_boot(
 ) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
 
-    let ci = CloudInitDisk::create(tmp_dir.path()).context("failed to create cloud-init disk")?;
+    let ssh_config = SshConfig::new();
+    let ci = CloudInitDisk::create(tmp_dir.path(), ssh_config.mac())
+        .context("failed to create cloud-init disk")?;
 
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
     let mut cfg = QemuConfig::new(&tmp_dir, &payload)
         .with_machine(machine)
         .with_cpu_model(cpu)
         .with_smp(smp)
-        .with_cloud_init(ci.path)
-        .with_ssh();
+        .with_cloud_init(ci.path.clone())
+        .with_ssh(ssh_config);
     if ovmf {
         cfg = cfg.with_ovmf(OVMF_CODE.into());
     }

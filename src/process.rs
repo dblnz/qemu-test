@@ -1,4 +1,5 @@
 use crate::config::CONFIG;
+use crate::util::SshConfig;
 use anyhow::{Context, Result, bail};
 use log::debug;
 use qapi::qmp::{self, RunState};
@@ -92,7 +93,7 @@ struct GuestConfig {
     incoming: bool,
     cpu_model: Option<CpuModel>,
     cloud_init: Option<PathBuf>,
-    ssh: bool,
+    ssh: Option<SshConfig>,
     ovmf: Option<PathBuf>,
     io_thread: bool,
 }
@@ -188,15 +189,13 @@ impl From<&GuestConfig> for Vec<String> {
             ]);
         }
 
-        if cfg.ssh {
+        if let Some(ssh_config) = &cfg.ssh {
+            let mac = ssh_config.mac();
             args.extend([
                 "-netdev".into(),
                 "type=user,id=user-net,hostfwd=tcp::0-:22".into(),
                 "-device".into(),
-                format!(
-                    "virtio-net-pci,mac={},netdev=user-net",
-                    crate::cloud_init::GUEST_MAC
-                ),
+                format!("virtio-net-pci,mac={mac},netdev=user-net"),
             ]);
         }
 
@@ -232,7 +231,7 @@ pub(crate) struct QemuConfig<'a> {
     smp: Option<u8>,
     cpu_model: Option<CpuModel>,
     cloud_init: Option<PathBuf>,
-    ssh: bool,
+    ssh: Option<SshConfig>,
     ovmf: Option<PathBuf>,
     io_thread: bool,
 }
@@ -247,7 +246,7 @@ impl<'a> QemuConfig<'a> {
             smp: None,
             cpu_model: None,
             cloud_init: None,
-            ssh: false,
+            ssh: None,
             ovmf: None,
             io_thread: false,
         }
@@ -279,8 +278,8 @@ impl<'a> QemuConfig<'a> {
         self
     }
 
-    pub fn with_ssh(mut self) -> Self {
-        self.ssh = true;
+    pub fn with_ssh(mut self, config: SshConfig) -> Self {
+        self.ssh = Some(config);
         self
     }
 

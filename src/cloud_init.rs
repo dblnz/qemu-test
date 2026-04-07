@@ -6,14 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub(crate) const GUEST_USER: &str = "cloud";
-pub(crate) const GUEST_MAC: &str = "00:10:20:30:40:50";
 
 pub(crate) struct CloudInitDisk {
     pub path: PathBuf,
     pub ssh_key_path: PathBuf,
 }
 
-fn create_cidata_disk(path: &Path, public_key: &str) -> Result<()> {
+fn create_cidata_disk(path: &Path, public_key: &str, mac: &str) -> Result<()> {
     let dir = path.parent().context("no parent dir")?;
     let cidata_dir = dir.join("cidata");
     fs::create_dir_all(&cidata_dir)?;
@@ -28,7 +27,7 @@ fn create_cidata_disk(path: &Path, public_key: &str) -> Result<()> {
         ethernets:
           eth0:
             match:
-              macaddress: {GUEST_MAC}
+              macaddress: {mac}
             dhcp4: true
     "};
 
@@ -64,7 +63,7 @@ fn create_cidata_disk(path: &Path, public_key: &str) -> Result<()> {
 }
 
 impl CloudInitDisk {
-    pub fn create(dir: &Path) -> Result<Self> {
+    pub fn create(dir: &Path, mac: &str) -> Result<Self> {
         let ssh_key_path = dir.join("id_cloud");
         let status = Command::new("ssh-keygen")
             .args([
@@ -86,8 +85,11 @@ impl CloudInitDisk {
         debug!("generated SSH key: {}", ssh_key_path.display());
 
         let disk_path = dir.join("cidata.img");
-        create_cidata_disk(&disk_path, public_key)?;
-        debug!("wrote cloud-init disk to {}", disk_path.display());
+        create_cidata_disk(&disk_path, public_key, mac)?;
+        debug!(
+            "wrote cloud-init disk to {} (mac={mac})",
+            disk_path.display()
+        );
 
         Ok(Self {
             path: disk_path,

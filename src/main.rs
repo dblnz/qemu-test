@@ -8,6 +8,7 @@ mod cloud_init;
 mod config;
 mod process;
 mod tests;
+mod util;
 
 // label, test function, skip reason (None = run by default)
 pub type TestEntry = (fn() -> String, fn() -> Result<()>, Option<&'static str>);

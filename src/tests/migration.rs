@@ -2,6 +2,7 @@ use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::CpuModel as Cpu;
 use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess};
 use crate::tests::full_os::ssh_command;
+use crate::util::SshConfig;
 use anyhow::{Context, Result, ensure};
 use log::debug;
 use qapi::qmp::{self, RunState};
@@ -124,7 +125,9 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     let mig_dir = tempfile::tempdir().context("failed to create migration temp dir")?;
     let mig_sock = mig_dir.path().join("migration.sock");
 
-    let ci = CloudInitDisk::create(src_dir.path()).context("failed to create cloud-init disk")?;
+    let ssh_config = SshConfig::new();
+    let ci = CloudInitDisk::create(src_dir.path(), ssh_config.mac())
+        .context("failed to create cloud-init disk")?;
     // Copy cidata to dst so both VMs can open it without file lock conflicts
     let dst_cidata_path = dst_dir.path().join("cidata.img");
     std::fs::copy(&ci.path, &dst_cidata_path).context("failed to copy cidata to dst")?;
@@ -136,7 +139,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
         .with_cpu_model(Cpu::Host)
         .with_smp(smp)
         .with_cloud_init(ci.path.clone())
-        .with_ssh();
+        .with_ssh(ssh_config);
 
     // Boot source and wait for login prompt
     let mut src = QemuProcess::spawn(base_cfg.clone()).context("failed to spawn source VM")?;
