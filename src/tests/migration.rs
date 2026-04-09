@@ -1,6 +1,6 @@
 use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::CpuModel as Cpu;
-use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess};
+use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess, RtcClock};
 use crate::tests::full_os::{OS_READY_PATTERN, SSH_ARGS, ssh_command};
 use crate::util::{NetConfig, allocate_taps, generate_mac};
 use anyhow::{Context, Result, bail, ensure};
@@ -276,7 +276,8 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
         .with_cpu_model(Cpu::Host)
         .with_smp(smp)
         .with_cloud_init(ci.path.clone())
-        .with_net(src_net);
+        .with_net(src_net)
+        .with_rtc_clock(RtcClock::Vm);
 
     // Boot source and wait for login prompt
     let mut src = QemuProcess::spawn(base_cfg.clone()).context("failed to spawn source VM")?;

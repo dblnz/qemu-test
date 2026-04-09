@@ -67,6 +67,12 @@ pub(crate) enum CpuModel {
     Qemu64,
 }
 
+#[derive(Clone, Display)]
+#[strum(serialize_all = "lowercase")]
+pub(crate) enum RtcClock {
+    Vm,
+}
+
 impl Socket<Unconnected> {
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -107,6 +113,7 @@ struct GuestConfig {
     net: Option<NetConfig>,
     ovmf: Option<PathBuf>,
     io_thread: bool,
+    rtc_clock: Option<RtcClock>,
 }
 
 fn build_osdisk_arg(cfg: &GuestConfig, path: &Path) -> Vec<String> {
@@ -184,6 +191,10 @@ impl From<&GuestConfig> for Vec<String> {
             args.extend(["-incoming".into(), "defer".into()]);
         }
 
+        if let Some(rtc_clock) = &cfg.rtc_clock {
+            args.extend(["-rtc".into(), format!("clock={}", rtc_clock)]);
+        }
+
         if let Some(path) = &cfg.ovmf {
             args.extend([
                 "-drive".into(),
@@ -258,6 +269,7 @@ pub(crate) struct QemuConfig<'a> {
     net: Option<NetConfig>,
     ovmf: Option<PathBuf>,
     io_thread: bool,
+    rtc_clock: Option<RtcClock>,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -273,6 +285,7 @@ impl<'a> QemuConfig<'a> {
             net: None,
             ovmf: None,
             io_thread: false,
+            rtc_clock: None,
         }
     }
 
@@ -316,6 +329,11 @@ impl<'a> QemuConfig<'a> {
         self.io_thread = true;
         self
     }
+
+    pub fn with_rtc_clock(mut self, clock: RtcClock) -> Self {
+        self.rtc_clock = Some(clock);
+        self
+    }
 }
 
 enum ChunkResult {
@@ -337,6 +355,7 @@ impl QemuProcess {
             net,
             ovmf,
             io_thread,
+            rtc_clock,
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
         let serial_log_path = temp_dir.path().join("serial.log");
@@ -362,6 +381,7 @@ impl QemuProcess {
             net,
             ovmf,
             io_thread,
+            rtc_clock,
             serial_log_path,
         };
 
