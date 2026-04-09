@@ -70,8 +70,7 @@ Note that `TEST_JOBS=n` needs at least n*2 tap devices to be available.
 Create a bridge and 4 tap devices for a test that can run 2 tests in parallel:
 
 ```bash
-sudo make setup-bridge
-sudo make setup-taps NUM_TAPS=4
+sudo make setup-bridge NUM_TAPS=4
 ```
 
 ### Run
@@ -84,8 +83,6 @@ sudo -E PATH=$PATH make run TEST_JOBS=2 TEST_FILTER=migration_os
 
 ### Cleanup
 
-The number of tap devices need to be specified so they are removed.
-
 ```bash
-sudo make teardown-bridge NUM_TAPS=4
+sudo make teardown-bridge
 ```

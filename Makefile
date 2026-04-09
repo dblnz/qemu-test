@@ -16,7 +16,7 @@ BRIDGE_ADDR = 192.168.100.1/24
 TAP_PREFIX = tap-qemu
 NUM_TAPS ?= 2
 
-.PHONY: build run clean lint check-tools setup-bridge teardown-bridge setup-taps teardown-taps
+.PHONY: build run clean lint check-tools setup-bridge teardown-bridge
 
 check-tools:
 	@$(foreach tool,$(REQUIRED_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
@@ -66,12 +66,6 @@ setup-bridge:
 	ip addr add $(BRIDGE_ADDR) dev $(BRIDGE_NAME)
 	ip link set $(BRIDGE_NAME) up
 	@echo "bridge $(BRIDGE_NAME) up with $(BRIDGE_ADDR)"
-
-teardown-bridge: teardown-taps
-	ip link del $(BRIDGE_NAME)
-	@echo "bridge $(BRIDGE_NAME) removed"
-
-setup-taps: setup-bridge
 	@for i in $$(seq 0 $$(($(NUM_TAPS) - 1))); do \
 		ip tuntap add dev $(TAP_PREFIX)-$$i mode tap user $$USER; \
 		ip link set $(TAP_PREFIX)-$$i master $(BRIDGE_NAME); \
@@ -79,8 +73,11 @@ setup-taps: setup-bridge
 		echo "tap $(TAP_PREFIX)-$$i up on $(BRIDGE_NAME)"; \
 	done
 
-teardown-taps:
-	@for i in $$(seq 0 $$(($(NUM_TAPS) - 1))); do \
-		ip link del $(TAP_PREFIX)-$$i 2>/dev/null && \
-		echo "tap $(TAP_PREFIX)-$$i removed" || true; \
+teardown-bridge:
+	@for tap in /sys/class/net/$(BRIDGE_NAME)/brif/*; do \
+		name=$$(basename $$tap) && \
+		ip link del $$name 2>/dev/null && \
+		echo "tap $$name removed" || true; \
 	done
+	ip link del $(BRIDGE_NAME)
+	@echo "bridge $(BRIDGE_NAME) removed"
