@@ -12,22 +12,31 @@ ALPINE_URL = https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/alpine-
 UBUNTU_URL = https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img
 OVMF_DEB_URL = http://security.debian.org/debian-security/pool/updates/main/e/edk2/ovmf_2022.11-6+deb12u1_all.deb
 QEMU_BIN ?= qemu-system-x86_64
-REQUIRED_TOOLS = cargo nasm wget $(QEMU_BIN) ssh-keygen mkdosfs mcopy gcc cpio gzip
+REQUIRED_BUILD_TOOLS = cargo nasm wget gcc cpio gzip
+REQUIRED_TOOLS = $(QEMU_BIN) ssh-keygen mkdosfs mcopy
 BRIDGE_NAME = qemu-br0
 BRIDGE_ADDR = 192.168.100.1/24
 TAP_PREFIX = tap-qemu
 NUM_TAPS ?= 2
 
-.PHONY: build run clean lint check-tools setup-bridge teardown-bridge
+.PHONY: build build-payloads build-release run clean lint check-build-tools check-tools setup-bridge teardown-bridge
 
 check-tools:
 	@$(foreach tool,$(REQUIRED_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
 
-build: check-tools $(GUEST_BIN) $(GUEST_PIO_STR_BIN) $(VMLINUZ) $(INITRD) $(OS_IMAGE) $(OVMF_CODE)
+check-build-tools:
+	@$(foreach tool,$(REQUIRED_BUILD_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
+
+build-payloads: check-build-tools $(GUEST_BIN) $(GUEST_PIO_STR_BIN) $(VMLINUZ) $(INITRD) $(OS_IMAGE) $(OVMF_CODE)
+
+build: build-payloads
 	cargo build
 
-run: build
+run: build check-tools
 	cargo run
+
+run-release: build-payloads check-tools
+	cargo run --release --locked
 
 $(OVMF_CODE):
 	cd payload && \

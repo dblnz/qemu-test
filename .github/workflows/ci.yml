@@ -7,21 +7,21 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    runs-on: ubuntu-24.04
+  ci:
+    runs-on: 'ubuntu-latest'
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout test framework
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd #v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm qemu-system-x86 wget mtools
+          sudo apt-get install -y nasm wget build-essential
 
-      - name: Verify dependencies
-        run: make check-tools
-
-      - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Check dependencies
+        run: make check-build-tools
 
       - name: Build
         run: make build
@@ -29,10 +29,6 @@ jobs:
       - name: Lint
         run: make lint
 
-      - name: Run tests
-        run: sudo -E env "PATH=$PATH" make run TEST_JOBS=2
-
-      - name: Run os migration tests
-        run: |
-          sudo make setup-bridge NUM_TAPS=4
-          sudo -E env "PATH=$PATH" make run TEST_JOBS=2 TEST_FILTER=migration_os
+  kvm:
+    uses: ./.github/workflows/test.yml
+    permissions: {}
