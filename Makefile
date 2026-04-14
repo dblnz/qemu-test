@@ -18,8 +18,16 @@ BRIDGE_NAME = qemu-br0
 BRIDGE_ADDR = 192.168.100.1/24
 TAP_PREFIX = tap-qemu
 NUM_TAPS ?= 2
+RELEASE_BIN = target/release/qemu-test
+RUST_SOURCES := $(shell find src -name "*.rs") build.rs Cargo.toml Cargo.lock
+PAYLOADS = $(GUEST_BIN) \
+		   $(GUEST_PIO_STR_BIN) \
+		   $(VMLINUZ) \
+		   $(INITRD) \
+		   $(OS_IMAGE) \
+		   $(OVMF_CODE)
 
-.PHONY: build build-payloads build-release run clean lint check-build-tools check-tools setup-bridge teardown-bridge
+.PHONY: build build-payloads build-release run run-release clean lint check-build-tools check-tools setup-bridge teardown-bridge
 
 check-tools:
 	@$(foreach tool,$(REQUIRED_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
@@ -27,7 +35,7 @@ check-tools:
 check-build-tools:
 	@$(foreach tool,$(REQUIRED_BUILD_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
 
-build-payloads: check-build-tools $(GUEST_BIN) $(GUEST_PIO_STR_BIN) $(VMLINUZ) $(INITRD) $(OS_IMAGE) $(OVMF_CODE)
+build-payloads: check-build-tools $(PAYLOADS)
 
 build: build-payloads
 	cargo build
@@ -35,8 +43,13 @@ build: build-payloads
 run: build check-tools
 	cargo run
 
-run-release: build-payloads check-tools
-	cargo run --release --locked
+$(RELEASE_BIN): $(RUST_SOURCES) $(PAYLOADS)
+	cargo build --release --locked
+
+build-release: $(RELEASE_BIN)
+
+run-release: $(RELEASE_BIN) check-tools
+	./$(RELEASE_BIN)
 
 $(OVMF_CODE):
 	cd payload && \
@@ -60,6 +73,7 @@ $(GUEST_PIO_STR_BIN): $(GUEST_PIO_STR_ASM)
 $(INIT_BIN): $(INIT_SRC)
 	gcc -static -o $@ $<
 
+.DELETE_ON_ERROR:
 $(INITRD): $(INIT_BIN)
 	d=$$(mktemp -d) && \
 	mkdir -p $$d/{dev,proc,sys} && \
@@ -68,7 +82,7 @@ $(INITRD): $(INIT_BIN)
 	rm -rf $$d
 
 clean:
-	rm -f $(GUEST_BIN) $(GUEST_PIO_STR_BIN) $(INIT_BIN) $(INITRD)
+	rm -f $(PAYLOADS)
 	cargo clean
 
 lint:
