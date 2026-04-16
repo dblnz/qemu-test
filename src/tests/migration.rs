@@ -1,13 +1,14 @@
 use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::CpuModel as Cpu;
 use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess, RtcClock};
-use crate::tests::full_os::{OS_READY_PATTERN, SSH_ARGS, ssh_command};
+use crate::tests::full_os::{OS_READY_PATTERN, ssh_command};
 use crate::util::{NetConfig, allocate_taps, generate_mac};
 use anyhow::{Context, Result, bail, ensure};
 use log::debug;
 use qapi::qmp::{self, RunState};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 use test_macro::test_fn;
 
@@ -18,142 +19,57 @@ const INITRD: &str = "payload/initrd.img";
 const OS_IMAGE: &str = "payload/os-image.qcow2";
 const OS_BOOT_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
+const ECHO_PORT: u16 = 7777;
+const ECHO_SERVER_CMD: &str = concat!(
+    "nohup python3 -c '",
+    "import socket; ",
+    "s=socket.socket(); ",
+    "s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); ",
+    "s.bind((\"0.0.0.0\",7777)); ",
+    "s.listen(1); ",
+    "c,_=s.accept(); ",
+    "[c.sendall(d) for d in iter(lambda:c.recv(4096),b\"\")]",
+    "' </dev/null >/dev/null 2>&1 &",
+);
 
-/// Persistent SSH connection using ControlMaster.
-/// The TCP session should survive VM live migration on a bridge,
-/// proving that network state migrated correctly.
-struct SshSession {
-    child: Child,
-    control_path: PathBuf,
-    key_path: PathBuf,
-    host: String,
-    user: String,
+/// Send a line over a TcpStream and read the echoed response.
+fn echo_roundtrip(stream: &mut TcpStream, msg: &str, timeout: Duration) -> Result<String> {
+    stream
+        .set_write_timeout(Some(timeout))
+        .context("set_write_timeout")?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .context("set_read_timeout")?;
+    writeln!(stream, "{msg}").context("echo write")?;
+    stream.flush().context("echo flush")?;
+    let mut reader = BufReader::new(stream.try_clone().context("clone stream")?);
+    let mut line = String::new();
+    reader.read_line(&mut line).context("echo read")?;
+    Ok(line.trim().to_string())
 }
 
-impl SshSession {
-    /// Open a ControlMaster connection. Call only after SSH is known to be
-    /// reachable (e.g. after a successful `ssh_command`).
-    fn open(
-        key_path: &Path,
-        host: &str,
-        port: u16,
-        user: &str,
-        dir: &Path,
-        timeout: Duration,
-    ) -> Result<Self> {
-        let control_path = dir.join("ssh_ctl");
-        let key_str = key_path.to_string_lossy().to_string();
-        let ctl_str = format!("ControlPath={}", control_path.display());
-        let port_str = port.to_string();
-        let user_host = format!("{user}@{host}");
-        let var_args: Vec<&str> = vec![
-            "-i",
-            &key_str,
-            "-o",
-            "ControlMaster=yes",
-            "-o",
-            &ctl_str,
-            "-o",
-            "ControlPersist=yes",
-            "-p",
-            &port_str,
-            "-N",
-            &user_host,
-        ];
-        let mut args = SSH_ARGS.to_vec();
-        args.extend_from_slice(&var_args);
-
-        let mut child = Command::new("ssh")
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("failed to start SSH ControlMaster")?;
-
-        let start = Instant::now();
-        while !control_path.exists() {
-            if start.elapsed() > timeout {
-                let _ = child.kill();
-                let _ = child.wait();
-                bail!("SSH ControlMaster socket did not appear within {timeout:?}");
-            }
-            if let Some(status) = child.try_wait().context("failed to check ssh process")? {
-                let stderr = child
-                    .stderr
-                    .take()
-                    .map(|s| std::io::read_to_string(s).unwrap_or_default())
-                    .unwrap_or_default();
-                bail!("SSH ControlMaster exited early ({status}): {stderr}");
-            }
-            std::thread::sleep(Duration::from_millis(200));
+/// Connect to the guest echo server, retrying until `timeout`.
+fn connect_echo(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
+    let start = Instant::now();
+    loop {
+        sleep(Duration::from_millis(200));
+        if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("interrupted");
         }
-        debug!(
-            "SSH ControlMaster established at {}",
-            control_path.display()
-        );
-
-        Ok(Self {
-            child,
-            control_path,
-            key_path: key_path.to_path_buf(),
-            host: host.to_string(),
-            user: user.to_string(),
-        })
+        match TcpStream::connect_timeout(
+            &format!("{host}:{port}").parse().context("parse addr")?,
+            Duration::from_secs(2),
+        ) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => {
+                if start.elapsed() > timeout {
+                    bail!("echo server not reachable after {timeout:?}: {e}");
+                }
+                debug!("echo connect failed ({e}), retrying...");
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
     }
-
-    /// Run a command through the persistent connection.
-    fn run(&self, command: &str) -> Result<String> {
-        let var_args = [
-            "-i",
-            &self.key_path.to_string_lossy(),
-            "-o",
-            &format!("ControlPath={}", self.control_path.display()),
-            &format!("{}@{}", self.user, self.host),
-            command,
-        ];
-        let mut args = SSH_ARGS.to_vec();
-        args.extend_from_slice(&var_args);
-
-        let output = Command::new("ssh")
-            .args(args)
-            .output()
-            .context("failed to run ssh command via control socket")?;
-
-        ensure!(
-            output.status.success(),
-            "SSH command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        debug!("ssh (ctl) output: {stdout}");
-        Ok(stdout)
-    }
-}
-
-impl Drop for SshSession {
-    fn drop(&mut self) {
-        debug!("closing SSH ControlMaster");
-        let _ = Command::new("ssh")
-            .args([
-                "-o",
-                &format!("ControlPath={}", self.control_path.display()),
-                "-O",
-                "exit",
-                "dummy",
-            ])
-            .output();
-        let _ = self.child.wait();
-    }
-}
-
-/// Parse the first field of `/proc/uptime` (seconds since boot).
-fn parse_uptime(raw: &str) -> Result<f64> {
-    raw.split_whitespace()
-        .next()
-        .context("empty uptime output")?
-        .parse()
-        .context("failed to parse uptime")
 }
 
 fn do_migration(
@@ -296,7 +212,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
         .context("source VM did not boot")?;
     debug!("source VM booted");
 
-    // Verify SSH on source (with retries until guest network is ready)
+    // Wait for SSH to become available
     ssh_command(
         &ci.ssh_key_path,
         taps.guest_host(),
@@ -308,20 +224,30 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     .context("SSH not reachable on source")?;
     debug!("source SSH is reachable");
 
-    // Open persistent SSH connection (SSH is known-reachable at this point)
-    let session = SshSession::open(
+    // Start a TCP echo server in the guest using python3 (always available)
+    ssh_command(
         &ci.ssh_key_path,
         taps.guest_host(),
         22,
         GUEST_USER,
-        mig_dir.path(),
-        Duration::from_secs(10),
+        ECHO_SERVER_CMD,
+        SSH_TIMEOUT,
     )
-    .context("failed to open SSH ControlMaster")?;
+    .context("failed to start echo server")?;
+    debug!("echo server started on guest port {ECHO_PORT}");
 
-    // Record uptime before migration
-    let uptime_before = parse_uptime(&session.run("cat /proc/uptime")?)?;
-    debug!("uptime before migration: {uptime_before:.1}s");
+    // Open a persistent TCP connection to the echo server
+    let mut stream = connect_echo(taps.guest_host(), ECHO_PORT, SSH_TIMEOUT)
+        .context("failed to connect to echo server")?;
+    debug!("TCP connection established to echo server");
+
+    // Verify echo works before migration
+    let reply = echo_roundtrip(&mut stream, "before-migration", Duration::from_secs(5))?;
+    ensure!(
+        reply == "before-migration",
+        "unexpected echo reply before migration: {reply}"
+    );
+    debug!("echo verified before migration");
 
     // Spawn destination in incoming mode with its own cidata copy
     let dst_cfg = base_cfg
@@ -338,13 +264,13 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     drop(src);
     debug!("source VM terminated");
 
-    // Verify the persistent SSH session survived migration
-    let uptime_after = parse_uptime(&session.run("cat /proc/uptime")?)?;
-    debug!("uptime after migration: {uptime_after:.1}s");
+    // Verify the same TCP connection still works after migration
+    let reply = echo_roundtrip(&mut stream, "after-migration", Duration::from_secs(10))?;
     ensure!(
-        uptime_after > uptime_before,
-        "timer not advancing after migration: {uptime_before:.1}s -> {uptime_after:.1}s"
+        reply == "after-migration",
+        "unexpected echo reply after migration: {reply}"
     );
+    debug!("echo verified after migration — TCP connection survived");
 
     Ok(())
 }
