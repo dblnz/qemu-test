@@ -24,12 +24,13 @@ TAP_PREFIX = tap-qemu
 NUM_TAPS ?= 2
 RELEASE_BIN = target/release/qemu-test
 RUST_SOURCES := $(shell find src -name "*.rs") build.rs Cargo.toml Cargo.lock
-PAYLOADS = $(GUEST_BIN) \
-		   $(GUEST_PIO_STR_BIN) \
-		   $(VMLINUZ) \
+EMBEDDED_PAYLOADS = $(GUEST_BIN) \
+		   $(GUEST_PIO_STR_BIN)
+RUNTIME_PAYLOADS = $(VMLINUZ) \
 		   $(INITRD) \
 		   $(OS_IMAGE) \
-		   $(OVMF_CODE)
+		   $(OVMF_CODE) \
+		   $(STRESS_NG_BIN)
 
 .PHONY: build build-payloads build-release run run-release clean lint check-build-tools check-tools setup-bridge teardown-bridge
 
@@ -39,7 +40,7 @@ check-tools:
 check-build-tools:
 	@$(foreach tool,$(REQUIRED_BUILD_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
 
-build-payloads: check-build-tools $(PAYLOADS) $(STRESS_NG_BIN)
+build-payloads: check-build-tools $(EMBEDDED_PAYLOADS) $(RUNTIME_PAYLOADS)
 
 build: build-payloads
 	cargo build
@@ -48,11 +49,11 @@ build: build-payloads
 run: build check-tools
 	cargo run
 
-$(RELEASE_BIN): $(RUST_SOURCES) $(PAYLOADS)
+$(RELEASE_BIN): $(RUST_SOURCES) $(EMBEDDED_PAYLOADS)
 	cargo build --release --locked && \
 	cargo test --release --locked
 
-build-release: $(RELEASE_BIN)
+build-release: $(RELEASE_BIN) $(RUNTIME_PAYLOADS)
 
 run-release: $(RELEASE_BIN) check-tools
 	./$(RELEASE_BIN)
@@ -98,7 +99,7 @@ $(INITRD): $(INIT_BIN)
 	rm -rf $$d
 
 clean:
-	rm -f $(PAYLOADS) $(STRESS_NG_BIN)
+	rm -f $(EMBEDDED_PAYLOADS) $(RUNTIME_PAYLOADS)
 	cargo clean
 
 lint:
