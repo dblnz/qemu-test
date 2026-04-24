@@ -75,6 +75,55 @@ pub(crate) fn ssh_command(
     }
 }
 
+pub(crate) fn scp_to_guest(
+    key_path: &Path,
+    host: &str,
+    port: u16,
+    user: &str,
+    local_path: &Path,
+    remote_path: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let start = Instant::now();
+    loop {
+        if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("interrupted");
+        }
+        let var_args = [
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "BatchMode=yes",
+            "-i",
+            &key_path.to_string_lossy(),
+            "-P",
+            &port.to_string(),
+            &local_path.to_string_lossy(),
+            &format!("{user}@{host}:{remote_path}"),
+        ];
+
+        let mut args = SSH_ARGS.to_vec();
+        args.extend_from_slice(&var_args);
+
+        let output = Command::new("scp")
+            .args(args)
+            .output()
+            .context("failed to run scp")?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        if start.elapsed() > timeout {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("SCP failed after {timeout:?}: {stderr}");
+        }
+
+        debug!("SCP not ready, retrying...");
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
 #[test_fn(
     cpu = Cpu::Host,
     machine = {Machine::Pc, Machine::Q35},

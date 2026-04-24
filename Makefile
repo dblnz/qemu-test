@@ -1,3 +1,7 @@
+STRESS_NG_VERSION = 0.21.00
+STRESS_NG_URL = https://github.com/ColinIanKing/stress-ng/archive/refs/tags/V$(STRESS_NG_VERSION).tar.gz
+STRESS_NG_SHA256 = 1339cbc6ccbff7e2ee2177bf0fd67e7b94e8ff7b07fe89bcfaec0280d800cf34
+STRESS_NG_BIN = payload/stress-ng
 GUEST_ASM = src/boot.asm
 GUEST_BIN = payload/guest.bin
 GUEST_PIO_STR_ASM = src/boot_pio_str.asm
@@ -13,10 +17,9 @@ UBUNTU_URL = https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubun
 OVMF_DEB_URL = http://security.debian.org/debian-security/pool/updates/main/e/edk2/ovmf_2022.11-6+deb12u1_all.deb
 QEMU_BIN ?= qemu-system-x86_64
 REQUIRED_BUILD_TOOLS = cargo nasm wget gcc cpio gzip
-REQUIRED_TOOLS = $(QEMU_BIN) ssh-keygen mkdosfs mcopy
+REQUIRED_TOOLS = $(QEMU_BIN) ssh-keygen scp mkdosfs mcopy
 BRIDGE_NAME = qemu-br0
 BRIDGE_ADDR = 192.168.100.1/24
-BRIDGE_SUBNET = 192.168.100.0/24
 TAP_PREFIX = tap-qemu
 NUM_TAPS ?= 2
 RELEASE_BIN = target/release/qemu-test
@@ -36,7 +39,7 @@ check-tools:
 check-build-tools:
 	@$(foreach tool,$(REQUIRED_BUILD_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
 
-build-payloads: check-build-tools $(PAYLOADS)
+build-payloads: check-build-tools $(PAYLOADS) $(STRESS_NG_BIN)
 
 build: build-payloads
 	cargo build
@@ -77,6 +80,16 @@ $(INIT_BIN): $(INIT_SRC)
 	gcc -static -o $@ $<
 
 .DELETE_ON_ERROR:
+$(STRESS_NG_BIN):
+	d=$$(mktemp -d) && \
+	wget -q $(STRESS_NG_URL) -O $$d/stress-ng.tar.gz && \
+	echo "$(STRESS_NG_SHA256)  $$d/stress-ng.tar.gz" | sha256sum -c --quiet && \
+	tar xzf $$d/stress-ng.tar.gz -C $$d --strip-components=1 && \
+	$(MAKE) -C $$d CC="gcc" LDFLAGS="-static" -j$$(nproc) >/dev/null 2>&1 && \
+	cp $$d/stress-ng $@ && \
+	rm -rf $$d
+
+.DELETE_ON_ERROR:
 $(INITRD): $(INIT_BIN)
 	d=$$(mktemp -d) && \
 	mkdir -p $$d/{dev,proc,sys} && \
@@ -85,7 +98,7 @@ $(INITRD): $(INIT_BIN)
 	rm -rf $$d
 
 clean:
-	rm -f $(PAYLOADS)
+	rm -f $(PAYLOADS) $(STRESS_NG_BIN)
 	cargo clean
 
 lint:
@@ -96,9 +109,7 @@ setup-bridge:
 	ip link add $(BRIDGE_NAME) type bridge
 	ip addr add $(BRIDGE_ADDR) dev $(BRIDGE_NAME)
 	ip link set $(BRIDGE_NAME) up
-	sysctl -w net.ipv4.ip_forward=1
-	iptables -t nat -A POSTROUTING -s $(BRIDGE_SUBNET) ! -o $(BRIDGE_NAME) -j MASQUERADE
-	@echo "bridge $(BRIDGE_NAME) up with $(BRIDGE_ADDR), NAT enabled"
+	@echo "bridge $(BRIDGE_NAME) up with $(BRIDGE_ADDR)"
 	@for i in $$(seq 0 $$(($(NUM_TAPS) - 1))); do \
 		ip tuntap add dev $(TAP_PREFIX)-$$i mode tap user $$USER; \
 		ip link set $(TAP_PREFIX)-$$i master $(BRIDGE_NAME); \
@@ -112,6 +123,5 @@ teardown-bridge:
 		ip link del $$name 2>/dev/null && \
 		echo "tap $$name removed" || true; \
 	done
-	iptables -t nat -D POSTROUTING -s $(BRIDGE_SUBNET) ! -o $(BRIDGE_NAME) -j MASQUERADE 2>/dev/null || true
 	ip link del $(BRIDGE_NAME)
 	@echo "bridge $(BRIDGE_NAME) removed"

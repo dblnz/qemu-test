@@ -1,7 +1,7 @@
 use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::CpuModel as Cpu;
 use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess, RtcClock};
-use crate::tests::full_os::{OS_READY_PATTERN, ssh_command};
+use crate::tests::full_os::{OS_READY_PATTERN, scp_to_guest, ssh_command};
 use crate::util::{NetConfig, allocate_taps, generate_mac};
 use anyhow::{Context, Result, bail, ensure};
 use log::debug;
@@ -22,9 +22,7 @@ const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
 const MIGRATION_STRESS_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
 const ECHO_PORT: u16 = 7777;
-const STRESS_NG_INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
-const STRESS_NG_INSTALL_CMD: &str =
-    "sudo apt-get update -qq && sudo apt-get install -y -qq stress-ng";
+const STRESS_NG_BIN: &str = "payload/stress-ng";
 const ECHO_SERVER_CMD: &str = concat!(
     "nohup python3 -c '",
     "import socket; ",
@@ -244,22 +242,23 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
     .context("failed to start echo server")?;
     debug!("echo server started on guest port {ECHO_PORT}");
 
-    // Optionally install and start stress-ng to load the guest during migration
+    // Optionally copy and start stress-ng to load the guest during migration
     if stress_ng {
-        ssh_command(
+        scp_to_guest(
             &ci.ssh_key_path,
             taps.guest_host(),
             22,
             GUEST_USER,
-            STRESS_NG_INSTALL_CMD,
-            STRESS_NG_INSTALL_TIMEOUT,
+            STRESS_NG_BIN.as_ref(),
+            "/tmp/stress-ng",
+            SSH_TIMEOUT,
         )
-        .context("failed to install stress-ng")?;
-        debug!("stress-ng installed");
+        .context("failed to copy stress-ng to guest")?;
+        debug!("stress-ng copied to guest");
 
         let vm_bytes_mb = base_cfg.ram_mb() / 4;
         let stress_ng_run_cmd = format!(
-            "nohup stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --timeout 0 </dev/null >/dev/null 2>&1 &"
+            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --timeout 0 </dev/null >/dev/null 2>&1 &"
         );
         ssh_command(
             &ci.ssh_key_path,
