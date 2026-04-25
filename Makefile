@@ -32,7 +32,10 @@ RUNTIME_PAYLOADS = $(VMLINUZ) \
 		   $(OVMF_CODE) \
 		   $(STRESS_NG_BIN)
 
-.PHONY: build build-payloads build-release run run-release clean lint check-build-tools check-tools setup-bridge teardown-bridge
+.PHONY: echo-runtime-payloads build build-payloads build-release run run-release clean lint check-build-tools check-tools setup-bridge teardown-bridge
+
+echo-cachable-payloads:
+	@$(foreach p,$(RUNTIME_PAYLOADS),realpath $(p);)
 
 check-tools:
 	@$(foreach tool,$(REQUIRED_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)

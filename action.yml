@@ -31,6 +31,25 @@ runs:
   - name: Install Rust
     uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1.15.4
 
+  - name: Build cache params
+    shell: bash
+    working-directory: ${{ github.action_path }}
+    id: build-cache-params
+    run: |
+      cache_key="payloads-$(md5sum Makefile | cut -d' ' -f1)"
+      echo "key=$cache_key" >> $GITHUB_OUTPUT
+      {
+        echo "path<<EOF"
+        make echo-cachable-payloads
+        echo "EOF"
+      } >> $GITHUB_OUTPUT
+
+  - name: Cache runtime payloads
+    uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae #v5.0.5
+    with:
+      path: ${{ steps.build-cache-params.outputs.path }}
+      key: ${{ steps.build-cache-params.outputs.key }}
+
   - name: Build tests
     shell: bash
     working-directory: ${{ github.action_path }}
