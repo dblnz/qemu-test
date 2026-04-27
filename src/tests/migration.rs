@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use test_macro::test_fn;
 
 const GUEST_BIN: &[u8] = include_bytes!("../../payload/guest.bin");
+const GUEST_AVX2_BIN: &[u8] = include_bytes!("../../payload/guest_avx2.bin");
 const EXPECTED_OUTPUT: &str = "HELLO FROM GUEST";
 const KERNEL: &str = "payload/vmlinuz-virt";
 const INITRD: &str = "payload/initrd.img";
@@ -312,6 +313,42 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         "unexpected echo reply after migration: {reply}"
     );
     debug!("echo verified after migration — TCP connection survived");
+
+    Ok(())
+}
+
+#[test_fn(smp = {1, 2})]
+pub(crate) fn test_live_migration_avx2(smp: u8) -> Result<()> {
+    let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
+    let dst_dir = tempfile::tempdir().context("failed to create dst temp dir")?;
+    let mig_dir = tempfile::tempdir().context("failed to create migration temp dir")?;
+    let mig_sock = mig_dir.path().join("migration.sock");
+
+    let guest_bin_path = src_dir.path().join("guest_avx2.bin");
+    std::fs::write(&guest_bin_path, GUEST_AVX2_BIN).context("failed to write AVX2 guest binary")?;
+    let payload = QemuPayload::GuestBin(guest_bin_path);
+
+    let cfg = QemuConfig::new(&src_dir, &payload)
+        .with_cpu_model(Cpu::Host)
+        .with_machine(Machine::Pc)
+        .with_smp(smp);
+
+    let mut src = QemuProcess::spawn(cfg.clone()).context("failed to spawn source VM")?;
+
+    // Wait for guest to load YMM registers and signal readiness
+    src.poll_line(ExpectedOutput::SubString("AVX2:READY".into()))
+        .context("source: AVX2 guest did not become ready")?;
+    debug!("AVX2 guest ready on source");
+
+    let cfg = cfg.with_incoming(&dst_dir);
+    let mut dst = QemuProcess::spawn(cfg).context("failed to spawn dest VM")?;
+
+    do_migration(&mut src, &mut dst, &mig_sock, MIGRATION_TIMEOUT)?;
+
+    // Verify YMM registers survived migration
+    dst.poll_line(ExpectedOutput::SubString("AVX2:OK".into()))
+        .context("destination: YMM registers not intact after migration")?;
+    debug!("AVX2 YMM registers verified after migration");
 
     Ok(())
 }

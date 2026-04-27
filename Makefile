@@ -6,6 +6,8 @@ GUEST_ASM = src/boot.asm
 GUEST_BIN = payload/guest.bin
 GUEST_PIO_STR_ASM = src/boot_pio_str.asm
 GUEST_PIO_STR_BIN = payload/guest_pio_str.bin
+GUEST_AVX2_ASM = src/boot_avx2.asm
+GUEST_AVX2_BIN = payload/guest_avx2.bin
 VMLINUZ = payload/vmlinuz-virt
 INITRD = payload/initrd.img
 INIT_BIN = payload/init
@@ -25,7 +27,8 @@ NUM_TAPS ?= 2
 RELEASE_BIN = target/release/qemu-test
 RUST_SOURCES := $(shell find src -name "*.rs") build.rs Cargo.toml Cargo.lock
 EMBEDDED_PAYLOADS = $(GUEST_BIN) \
-		   $(GUEST_PIO_STR_BIN)
+		   $(GUEST_PIO_STR_BIN) \
+		   $(GUEST_AVX2_BIN)
 RUNTIME_PAYLOADS = $(VMLINUZ) \
 		   $(INITRD) \
 		   $(OS_IMAGE) \
@@ -78,6 +81,9 @@ $(GUEST_BIN): $(GUEST_ASM)
 	nasm -f bin -o $@ $<
 
 $(GUEST_PIO_STR_BIN): $(GUEST_PIO_STR_ASM)
+	nasm -f bin -o $@ $<
+
+$(GUEST_AVX2_BIN): $(GUEST_AVX2_ASM)
 	nasm -f bin -o $@ $<
 
 $(INIT_BIN): $(INIT_SRC)
