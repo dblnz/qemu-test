@@ -14,6 +14,7 @@ use test_macro::test_fn;
 const OS_IMAGE: &str = "payload/os-image.qcow2";
 const OVMF_CODE: &str = "payload/OVMF_CODE.fd";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(45);
+const REBOOT_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const OS_READY_PATTERN: &str = r"Ubuntu (22|24).04.\d+ LTS cloud ttyS0";
 pub(crate) const SSH_ARGS: [&str; 6] = [
@@ -191,6 +192,109 @@ pub(crate) fn test_os_boot(
     )?;
     debug!("guest hostname: {hostname}");
     ensure!(hostname == "cloud", "unexpected hostname: {hostname}");
+
+    Ok(())
+}
+
+/// Send an SSH command without waiting for a response or retrying.
+/// Used for commands like `sudo reboot` where the connection will drop.
+fn ssh_fire_and_forget(key_path: &Path, host: &str, port: u16, user: &str, command: &str) {
+    let var_args = [
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
+        "-i",
+        &key_path.to_string_lossy(),
+        "-p",
+        &port.to_string(),
+        &format!("{user}@{host}"),
+        command,
+    ];
+
+    let mut args = SSH_ARGS.to_vec();
+    args.extend_from_slice(&var_args);
+
+    match Command::new("ssh").args(args).output() {
+        Ok(output) => debug!("fire-and-forget ssh exited with {}", output.status),
+        Err(e) => debug!("fire-and-forget ssh failed: {e}"),
+    }
+}
+
+#[test_fn(smp = {1, 2})]
+pub(crate) fn test_os_reboot(smp: u8) -> Result<()> {
+    let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
+
+    let net_config = NetConfig::user_net();
+    let ci = CloudInitDisk::create(tmp_dir.path(), &net_config)
+        .context("failed to create cloud-init disk")?;
+
+    let payload = QemuPayload::DiskImage(OS_IMAGE.into());
+    let cfg = QemuConfig::new(&tmp_dir, &payload)
+        .with_smp(smp)
+        .with_cloud_init(ci.path.clone())
+        .with_net(net_config)
+        .with_allow_reboot();
+    let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
+
+    let ssh_port = process.ssh_port()?;
+
+    // Wait for initial boot
+    let ready_pattern = ExpectedOutput::Pattern(OS_READY_PATTERN.try_into()?);
+    process
+        .poll_line_timeout(ready_pattern, BOOT_TIMEOUT)
+        .context("initial boot did not complete")?;
+    debug!("initial boot complete");
+
+    // Verify SSH works before reboot
+    ssh_command(
+        &ci.ssh_key_path,
+        "localhost",
+        ssh_port,
+        GUEST_USER,
+        "hostname",
+        SSH_TIMEOUT,
+    )
+    .context("SSH failed before reboot")?;
+
+    // Issue reboot
+    debug!("issuing reboot via SSH");
+    ssh_fire_and_forget(
+        &ci.ssh_key_path,
+        "localhost",
+        ssh_port,
+        GUEST_USER,
+        "sudo reboot",
+    );
+
+    // Wait for login prompt to reappear on serial (proves the guest rebooted)
+    let ready_pattern = ExpectedOutput::Pattern(OS_READY_PATTERN.try_into()?);
+    process
+        .poll_line_timeout(ready_pattern, REBOOT_TIMEOUT)
+        .context("guest did not come back after reboot")?;
+    debug!("guest rebooted successfully");
+
+    // Verify the guest is functional after reboot
+    let uptime = ssh_command(
+        &ci.ssh_key_path,
+        "localhost",
+        ssh_port,
+        GUEST_USER,
+        "cat /proc/uptime",
+        SSH_TIMEOUT,
+    )
+    .context("SSH failed after reboot")?;
+    let uptime_secs: f64 = uptime
+        .split_whitespace()
+        .next()
+        .context("empty uptime output")?
+        .parse()
+        .context("failed to parse uptime")?;
+    debug!("uptime after reboot: {uptime_secs:.1}s");
+    ensure!(
+        uptime_secs < 120.0,
+        "uptime too high after reboot ({uptime_secs:.1}s), reboot may not have occurred"
+    );
 
     Ok(())
 }

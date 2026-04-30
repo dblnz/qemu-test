@@ -114,6 +114,7 @@ struct GuestConfig {
     ovmf: Option<PathBuf>,
     io_thread: bool,
     rtc_clock: Option<RtcClock>,
+    allow_reboot: bool,
 }
 
 fn build_osdisk_arg(cfg: &GuestConfig, path: &Path) -> Vec<String> {
@@ -144,7 +145,12 @@ fn build_kernel_args(kernel: &Path, initrd: Option<&PathBuf>) -> Vec<String> {
 
 impl From<&GuestConfig> for Vec<String> {
     fn from(cfg: &GuestConfig) -> Self {
-        let mut args = vec!["-display".into(), "none".into(), "-no-reboot".into()];
+        let mut args = vec!["-display".into(), "none".into()];
+        // Exit on guest reboot (e.g. triple fault, kernel panic) instead of
+        // silently restarting, so tests fail fast rather than hanging.
+        if !cfg.allow_reboot {
+            args.push("-no-reboot".into());
+        }
 
         if let Some(cpu) = &cfg.cpu_model {
             args.extend(["-cpu".into(), cpu.to_string()]);
@@ -271,6 +277,7 @@ pub(crate) struct QemuConfig<'a> {
     ovmf: Option<PathBuf>,
     io_thread: bool,
     rtc_clock: Option<RtcClock>,
+    allow_reboot: bool,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -293,6 +300,7 @@ impl<'a> QemuConfig<'a> {
             ovmf: None,
             io_thread: false,
             rtc_clock: None,
+            allow_reboot: false,
         }
     }
 
@@ -345,6 +353,11 @@ impl<'a> QemuConfig<'a> {
         self.rtc_clock = Some(clock);
         self
     }
+
+    pub fn with_allow_reboot(mut self) -> Self {
+        self.allow_reboot = true;
+        self
+    }
 }
 
 enum ChunkResult {
@@ -368,6 +381,7 @@ impl QemuProcess {
             ovmf,
             io_thread,
             rtc_clock,
+            allow_reboot,
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
         let serial_log_path = temp_dir.path().join("serial.log");
@@ -388,6 +402,7 @@ impl QemuProcess {
             ovmf,
             io_thread,
             rtc_clock,
+            allow_reboot,
             serial_log_path,
         };
 
