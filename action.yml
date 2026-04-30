@@ -17,6 +17,10 @@ inputs:
     description: "Number of parallel test jobs"
     default: "2"
     required: false
+  skip_migration_os_tests:
+    description: "Skip migration OS tests (true/false)"
+    default: "false"
+    required: false
 
 runs:
   using: 'composite'
@@ -72,6 +76,7 @@ runs:
 
   - name: Run os migration tests
     working-directory: ${{ github.action_path }}
+    if: ${{ inputs.skip_migration_os_tests != 'true' }}
     shell: bash
     env:
       ACCEL: ${{ inputs.accel }}
@@ -89,4 +94,4 @@ runs:
     shell: bash
     env:
       TEST_JOBS: ${{ inputs.test_jobs }}
-    run: sudo make teardown-bridge
+    run: sudo make teardown-bridge || true
