@@ -253,4 +253,34 @@ mod tests {
             assert!(TestFilter::parse(token).is_ok(), "expected valid: {token}");
         }
     }
+
+    #[test]
+    fn filter_matches_optional_param_labels() {
+        let filter = TestFilter::parse("cpu=qemu64").expect("filter should parse");
+        // Label with optional param present
+        assert!(filter.matches("test_kernel_boot(machine=pc, smp=1, cpu=qemu64)", None));
+        // Label with different optional param value
+        assert!(!filter.matches("test_kernel_boot(machine=pc, smp=1, cpu=host)", None));
+        // Label with optional param absent (None variant)
+        assert!(!filter.matches("test_kernel_boot(machine=pc, smp=1)", None));
+    }
+
+    #[test]
+    fn filter_excludes_optional_param_labels() {
+        let filter = TestFilter::parse("-cpu=host").expect("filter should parse");
+        // Excludes matching optional param
+        assert!(!filter.matches("test_kernel_boot(machine=pc, smp=1, cpu=host)", None));
+        // Does not exclude different value
+        assert!(filter.matches("test_kernel_boot(machine=pc, smp=1, cpu=qemu64)", None));
+        // Does not exclude None variant (param absent)
+        assert!(filter.matches("test_kernel_boot(machine=pc, smp=1)", None));
+
+        let filter = TestFilter::parse("-cpu").expect("filter should parse");
+        // Excludes optional param
+        assert!(!filter.matches("test_kernel_boot(machine=pc, smp=1, cpu=host)", None));
+        // Excludes also different value
+        assert!(!filter.matches("test_kernel_boot(machine=pc, smp=1, cpu=qemu64)", None));
+        // Does not exclude None variant (param absent)
+        assert!(filter.matches("test_kernel_boot(machine=pc, smp=1)", None));
+    }
 }

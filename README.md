@@ -52,6 +52,7 @@ make run TEST_FILTER=-migration,smp=2
 
 This runs tests matching `smp=2`, excluding tests whose label contains `migration`.
 If a test matches both positive and negative tokens, the negative token wins and the test is excluded.
+
 ## Skipping
 
 Tests can be annotated with `#[test_fn(skip = "reason")]` to skip them with a reason. Note that tests that are selected by the filter explicitly will be run even if they are annotated with skip.
@@ -66,6 +67,13 @@ This will expand to 1 + 2 = 3 tests:
 #[test_fn(machine = Machine::Pc, smp = 1)]
 #[test_fn(machine = Machine::Q35, smp = {2, 4})]
 pub(crate) fn test_kernel_boot(machine: Machine, smp: u8) -> Result<()> { ... }
+```
+
+Params wrapped in `[]` are expanded as `Option<T>`, so there will be a None variant implicitly added to the cartesian product:
+
+```rust
+#[test_fn(smp = {1, 2}, cpu = [CpuModel::Host, CpuModel::Qemu64])]
+pub(crate) fn test_kernel_boot(smp: u8, cpu: Option<CpuModel>) -> Result<()> { ... }
 ```
 
 ## Full OS migration test
