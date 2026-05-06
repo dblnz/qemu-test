@@ -58,9 +58,10 @@ fn main() -> Result<()> {
     }
 
     let test_jobs = CONFIG.test_jobs()?;
+    let test_repeat = CONFIG.test_repeat()?;
     let filter: Option<TestFilter> = CONFIG.test_filter()?;
 
-    let mut tests: Vec<&TestEntry> = TESTS
+    let tests: Vec<&TestEntry> = TESTS
         .iter()
         .filter(|entry| {
             let label = entry.0();
@@ -81,6 +82,7 @@ fn main() -> Result<()> {
         })
         .collect();
 
+    let mut tests = tests.repeat(test_repeat);
     tests.shuffle(&mut rand::rng());
 
     if let Some(filter) = filter

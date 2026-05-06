@@ -2,43 +2,65 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
-use syn::{braced, Attribute, Expr, FnArg, Ident, ItemFn, Pat, Token, parse_macro_input};
+use syn::{braced, bracketed, Attribute, Expr, FnArg, Ident, ItemFn, Pat, Token, parse_macro_input};
 
-/// A parameter specification that supports single or multi-value syntax.
+/// A parameter specification that supports single, multi-value, or optional syntax.
 /// - `smp = 4` → single value
 /// - `smp = {1, 2, 4}` → multiple values (cartesian product)
+/// - `cpu = [CpuModel::Qemu64, CpuModel::Host]` → optional parameter with implicit None variant
 struct ParamSpec {
     name: Ident,
     values: Vec<Expr>,
+    optional: bool,
 }
 
 impl Parse for ParamSpec {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let name: Ident = input.parse()?;
         input.parse::<Token![=]>()?;
-        let values = if input.peek(syn::token::Brace) {
+        let (values, optional) = if input.peek(syn::token::Brace) {
             let content;
             braced!(content in input);
-            Punctuated::<Expr, Token![,]>::parse_terminated(&content)?
+            let vals = Punctuated::<Expr, Token![,]>::parse_terminated(&content)?
                 .into_iter()
-                .collect()
+                .collect();
+            (vals, false)
+        } else if input.peek(syn::token::Bracket) {
+            let content;
+            bracketed!(content in input);
+            let vals = Punctuated::<Expr, Token![,]>::parse_terminated(&content)?
+                .into_iter()
+                .collect();
+            (vals, true)
         } else {
-            vec![input.parse::<Expr>()?]
+            (vec![input.parse::<Expr>()?], false)
         };
-        Ok(ParamSpec { name, values })
+        Ok(ParamSpec {
+            name,
+            values,
+            optional,
+        })
     }
 }
 
 /// Registers a test function with optional parameterization.
 ///
-/// Supports cartesian product expansion and skip:
+/// Supports cartesian product expansion, optional parameters, and skip:
 /// ```ignore
 /// #[test_fn(machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4})]
 /// fn test_kernel_boot(machine: Machine, smp: u8) -> Result<()> { ... }
 ///
+/// #[test_fn(machine = {Machine::Pc, Machine::Q35}, cpu = [CpuModel::Qemu64, CpuModel::Host])]
+/// fn test_cpu(machine: Machine, cpu: Option<CpuModel>) -> Result<()> { ... }
+///
 /// #[test_fn(skip = "requires tap networking")]
 /// fn test_tap_migration() -> Result<()> { ... }
 /// ```
+///
+/// Optional parameters (using `[]` syntax) add an implicit `None` variant to the
+/// cartesian product. The function parameter type must be `Option<T>`. The label
+/// omits optional parameters when their value is `None`.
+///
 /// Generates one `TestEntry` per combination, auto-registered via `linkme`.
 #[proc_macro_attribute]
 pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -76,7 +98,7 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let params = &input.sig.inputs;
 
     // Expand each annotation's specs into resolved combinations via cartesian product
-    let mut all_combos: Vec<Vec<(Ident, Expr)>> = Vec::new();
+    let mut all_combos: Vec<Vec<(Ident, Option<Expr>, bool)>> = Vec::new();
     for specs in &all_spec_sets {
         if specs.is_empty() {
             all_combos.push(Vec::new());
@@ -118,11 +140,13 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         fn_defs.push(quote! {
             #(#other_attrs)*
+            #[allow(unused_variables)]
             #vis fn #fn_name() #ret {
                 #(#bindings)*
                 (|| #block)()
             }
 
+            #[allow(unused_variables)]
             fn #label_fn() -> String {
                 #(#bindings)*
                 #label_code
@@ -190,14 +214,21 @@ fn parse_specs_from_attr(attr: &Attribute) -> Vec<ParamSpec> {
 }
 
 /// Computes the cartesian product of all parameter value sets.
-fn cartesian_product(specs: &[ParamSpec]) -> Vec<Vec<(Ident, Expr)>> {
-    let mut result: Vec<Vec<(Ident, Expr)>> = vec![vec![]];
+/// Optional params include an implicit `None` variant.
+fn cartesian_product(specs: &[ParamSpec]) -> Vec<Vec<(Ident, Option<Expr>, bool)>> {
+    let mut result: Vec<Vec<(Ident, Option<Expr>, bool)>> = vec![vec![]];
     for spec in specs {
         let mut new_result = Vec::new();
         for combo in &result {
+            if spec.optional {
+                // Add the None variant
+                let mut none_combo = combo.clone();
+                none_combo.push((spec.name.clone(), None, true));
+                new_result.push(none_combo);
+            }
             for value in &spec.values {
                 let mut new_combo = combo.clone();
-                new_combo.push((spec.name.clone(), value.clone()));
+                new_combo.push((spec.name.clone(), Some(value.clone()), spec.optional));
                 new_result.push(new_combo);
             }
         }
@@ -208,7 +239,7 @@ fn cartesian_product(specs: &[ParamSpec]) -> Vec<Vec<(Ident, Expr)>> {
 
 fn make_bindings(
     params: &Punctuated<FnArg, Token![,]>,
-    combo: &[(Ident, Expr)],
+    combo: &[(Ident, Option<Expr>, bool)],
 ) -> Vec<proc_macro2::TokenStream> {
     params
         .iter()
@@ -222,29 +253,59 @@ fn make_bindings(
             let param_name = &pat_ident.ident;
             let param_type = &pat_type.ty;
 
-            let (_, value) = combo
+            let (_, value, optional) = combo
                 .iter()
-                .find(|(name, _)| name == param_name)
+                .find(|(name, _, _)| name == param_name)
                 .unwrap_or_else(|| {
                     panic!("missing attribute value for parameter `{param_name}`")
                 });
 
-            quote! { let #param_name: #param_type = #value; }
+            if *optional {
+                match value {
+                    Some(expr) => quote! { let #param_name: #param_type = Some(#expr); },
+                    None => quote! { let #param_name: #param_type = None; },
+                }
+            } else {
+                let expr = value.as_ref().unwrap();
+                quote! { let #param_name: #param_type = #expr; }
+            }
         })
         .collect()
 }
 
 fn make_label_code(
     name_str: &str,
-    combo: &[(Ident, Expr)],
+    combo: &[(Ident, Option<Expr>, bool)],
 ) -> proc_macro2::TokenStream {
     if combo.is_empty() {
         quote! { let __test_label = #name_str.to_string(); }
     } else {
-        let keys: Vec<String> = combo.iter().map(|(name, _)| name.to_string()).collect();
-        let idents: Vec<&Ident> = combo.iter().map(|(name, _)| name).collect();
-        let fmt_parts: Vec<_> = keys.iter().map(|k| format!("{k}={{}}")).collect();
-        let fmt_str = format!("{}({})", name_str, fmt_parts.join(", "));
-        quote! { let __test_label = format!(#fmt_str, #(#idents),*); }
+        // Only include params in the label that are not optional-None
+        let visible: Vec<&(Ident, Option<Expr>, bool)> = combo
+            .iter()
+            .filter(|(_, value, optional)| !(*optional && value.is_none()))
+            .collect();
+
+        if visible.is_empty() {
+            quote! { let __test_label = #name_str.to_string(); }
+        } else {
+            let keys: Vec<String> = visible.iter().map(|(name, _, _)| name.to_string()).collect();
+            let fmt_parts: Vec<_> = keys.iter().map(|k| format!("{k}={{}}")).collect();
+            let fmt_str = format!("{}({})", name_str, fmt_parts.join(", "));
+
+            // For optional Some values, we need to format the inner value
+            let format_args: Vec<proc_macro2::TokenStream> = visible
+                .iter()
+                .map(|(name, _, optional)| {
+                    if *optional {
+                        quote! { #name.unwrap() }
+                    } else {
+                        quote! { #name }
+                    }
+                })
+                .collect();
+
+            quote! { let __test_label = format!(#fmt_str, #(#format_args),*); }
+        }
     }
 }

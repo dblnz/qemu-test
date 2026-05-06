@@ -9,6 +9,7 @@ pub(crate) struct Config {
     accel: Option<String>,
     test_jobs: Option<String>,
     test_filter: Option<String>,
+    test_repeat: Option<String>,
     keep_logs: Option<String>,
 }
 
@@ -17,6 +18,7 @@ pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     accel: env::var("ACCEL").ok(),
     test_jobs: env::var("TEST_JOBS").ok(),
     test_filter: env::var("TEST_FILTER").ok(),
+    test_repeat: env::var("TEST_REPEAT").ok(),
     keep_logs: env::var("KEEP_LOGS").ok(),
 });
 
@@ -56,5 +58,16 @@ impl Config {
 
     pub fn keep_logs(&self) -> Option<&str> {
         self.keep_logs.as_deref()
+    }
+
+    pub fn test_repeat(&self) -> Result<usize> {
+        let Some(value) = self.test_repeat.as_deref() else {
+            return Ok(1);
+        };
+        let repeat: usize = value.parse().context("invalid TEST_REPEAT value")?;
+        if repeat == 0 {
+            anyhow::bail!("TEST_REPEAT must be at least 1");
+        }
+        Ok(repeat)
     }
 }

@@ -126,25 +126,25 @@ pub(crate) fn scp_to_guest(
 }
 
 #[test_fn(
-    cpu = Cpu::Host,
+    cpu = [Cpu::Host],
     machine = {Machine::Pc, Machine::Q35},
     smp = {1, 2, 4},
-    ovmf = false,
+    ovmf = [],
     io_thread = {true, false},
 )]
 // OVMF requires UEFI support, which is not available on Machine::Pc
 #[test_fn(
-    cpu = Cpu::Host,
+    cpu = [Cpu::Host],
     machine = Machine::Q35,
     smp = {1, 2, 4},
-    ovmf = true,
+    ovmf = [OVMF_CODE],
     io_thread = {true, false},
 )]
 pub(crate) fn test_os_boot(
-    cpu: Cpu,
+    cpu: Option<Cpu>,
     machine: Machine,
     smp: u8,
-    ovmf: bool,
+    ovmf: Option<&str>,
     io_thread: bool,
 ) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
@@ -156,12 +156,14 @@ pub(crate) fn test_os_boot(
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
     let mut cfg = QemuConfig::new(&tmp_dir, &payload)
         .with_machine(machine)
-        .with_cpu_model(cpu)
         .with_smp(smp)
         .with_cloud_init(ci.path.clone())
         .with_net(net_config);
-    if ovmf {
-        cfg = cfg.with_ovmf(OVMF_CODE.into());
+    if let Some(model) = cpu {
+        cfg = cfg.with_cpu_model(model)
+    }
+    if let Some(path) = ovmf {
+        cfg = cfg.with_ovmf(path.into());
     }
     if io_thread {
         cfg = cfg.with_io_thread();
