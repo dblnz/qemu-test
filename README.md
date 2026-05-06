@@ -35,6 +35,7 @@ The test setup can be configured via environment variables:
 - `ACCEL` - accelerator to use (default: `kvm`)
 - `TEST_FILTER` - filter to select tests to run (default: all tests)
 - `KEEP_LOGS` - directory to keep logs of all tests (default: none)
+- `TEST_REPEAT` - number of times to repeat each test (default: 1)
 
 ## Filter
 
